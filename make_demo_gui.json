@@ -1,0 +1,15 @@
+{
+  "wav_path": "D:\\Torrents\\ATS_01_1.wav",
+  "cue_path": "",
+  "output_mkv": "d:\\Torrents\\12345.mkv",
+  "ffmpeg": "c:\\progs\\ffmpeg\\bin\\ffmpeg.exe",
+  "ffprobe": "c:\\progs\\ffmpeg\\bin\\ffprobe.exe",
+  "font": "C:\\Windows\\Fonts\\arial.ttf",
+  "album_title": "TECET",
+  "res": "1280x720",
+  "fps": "10",
+  "preset": "ultrafast",
+  "crf": "23",
+  "audio_bitrate": "192k",
+  "audio_codec": null
+}
