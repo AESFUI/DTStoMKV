@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dtstomkv"
+version = "0.2.0"
+description = "Linux and Windows audio to MKV converter with CUE chapters"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.23"]
+
+[project.scripts]
+dtstomkv = "dtstomkv.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["dtstomkv*"]
