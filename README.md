@@ -94,7 +94,7 @@ FFmpeg и ffprobe ищутся через PATH. Произвольные пут�
 
 | Профиль CLI | Вариант в GUI | Параметры |
 | --- | --- | --- |
-| `av1` | AV1 — libaom, screen, CRF 24 | `libaom-av1`, `-aom-params tune-content=screen -crf 24 -b:v 0` |
+| `av1` | AV1 — libaom, screen, CRF 24, cpu-used 6 | `libaom-av1`, `-aom-params tune-content=screen -crf 24 -b:v 0 -cpu-used 6 -row-mt 1 -threads:v 0` |
 | `hevc` | HEVC / H.265 — x265 slow, CRF 27 | `libx265`, `-preset slow -crf 27` |
 | `vp9` | VP9 — libvpx, screen, CRF 17 | `libvpx-vp9`, `-tune-content screen -crf 17 -b:v 0` |
 | `h264` | H.264 — прежний вариант, по умолчанию | `libx264`, `-preset ultrafast -tune stillimage -crf 23` |
@@ -108,6 +108,11 @@ FFmpeg и ffprobe ищутся через PATH. Произвольные пут�
 по-прежнему изменяют только профиль `h264`. FPS и разрешение применяются ко всем
 профилям. `-b:v 0` включает режим постоянного качества без заданного видеобитрейта
 для AV1/VP9. Подробнее: [документация кодировщиков FFmpeg](https://ffmpeg.org/ffmpeg-codecs.html).
+В профиле AV1 явно задан `cpu-used=6` вместо медленного значения по умолчанию 1;
+`row-mt=1` включает параллельную обработку строк, а `threads:v=0` оставляет выбор
+числа потоков FFmpeg. Это ускоряет кодирование ценой изменения качества и
+эффективности сжатия при том же CRF. Реальную скорость показывает журнал;
+новые параметры применяются при следующем запуске конвертации.
 
 Проверено с FFmpeg/ffprobe 9.0.2. Для FFmpeg 7+ граф фильтров загружается через
 `-/filter:v`; для более ранних версий используется `-filter:v` с содержимым графа.

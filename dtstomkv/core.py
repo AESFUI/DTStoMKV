@@ -25,8 +25,9 @@ class VideoProfile:
 
 
 VIDEO_PROFILES = {
-    "av1": VideoProfile("AV1 — libaom, screen, CRF 24", "libaom-av1",
-                        ("-crf", "24", "-b:v", "0", "-aom-params", "tune-content=screen")),
+    "av1": VideoProfile("AV1 — libaom, screen, CRF 24, cpu-used 6", "libaom-av1",
+                        ("-crf", "24", "-b:v", "0", "-cpu-used", "6", "-row-mt", "1",
+                         "-threads:v", "0", "-aom-params", "tune-content=screen")),
     "hevc": VideoProfile("HEVC / H.265 — x265 slow, CRF 27", "libx265",
                          ("-preset", "slow", "-crf", "27")),
     "vp9": VideoProfile("VP9 — libvpx, screen, CRF 17", "libvpx-vp9",

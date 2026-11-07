@@ -16,7 +16,7 @@ def main(argv=None):
     convert.add_argument("destination", nargs="?", help="Выходной файл или папка; по умолчанию <имя входного файла>.mkv")
     convert.add_argument("--video", choices=("none", "copy", "visual"), default="none")
     convert.add_argument("--video-profile", choices=tuple(VIDEO_PROFILES), default="h264",
-                         help="Профиль визуализации: av1 (screen/24), hevc (slow/27), vp9 (screen/17), h264 (прежний)")
+                         help="Профиль визуализации: av1 (screen/24, cpu-used 6), hevc (slow/27), vp9 (screen/17), h264 (прежний)")
     convert.add_argument("--codec", choices=("lpcm", "flac", "ac3", "truehd"), default="lpcm")
     convert.add_argument("--bit-depth", choices=("Auto", "16", "24", "32"), default="Auto")
     convert.add_argument("--sample-rate", default="Auto")
