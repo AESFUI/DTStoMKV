@@ -17,6 +17,24 @@ from .runtime import executable, font_path, process_options
 SUPPORTED_EXTS = (".mkv", ".aob", ".wav", ".dts", ".mlp", ".mka", ".ts", ".flac", ".ac3", ".m4a", ".truehd")
 
 
+@dataclass(frozen=True)
+class VideoProfile:
+    label: str
+    encoder: str
+    arguments: tuple[str, ...]
+
+
+VIDEO_PROFILES = {
+    "av1": VideoProfile("AV1 — libaom, screen, CRF 24", "libaom-av1",
+                        ("-crf", "24", "-b:v", "0", "-aom-params", "tune-content=screen")),
+    "hevc": VideoProfile("HEVC / H.265 — x265 slow, CRF 27", "libx265",
+                         ("-preset", "slow", "-crf", "27")),
+    "vp9": VideoProfile("VP9 — libvpx, screen, CRF 17", "libvpx-vp9",
+                        ("-crf", "17", "-b:v", "0", "-tune-content", "screen")),
+    "h264": VideoProfile("H.264 — x264 ultrafast, stillimage, CRF 23 (прежний)", "libx264", ()),
+}
+
+
 class Cancelled(RuntimeError):
     pass
 
@@ -112,6 +130,7 @@ class Options:
     preset: str = "ultrafast"
     flac_level: int = 8
     overwrite: bool = False
+    video_profile: str = "h264"
 
 
 class Converter:
@@ -122,6 +141,7 @@ class Converter:
         self.log = log
         self.stop_event = stop_event if stop_event is not None else threading.Event()
         self._file_filters = None
+        self._video_encoders = None
 
     def run(self, command, cwd=None, capture=False):
         if self.stop_event.is_set():
@@ -166,6 +186,24 @@ class Converter:
         if self._file_filters:
             return ["-/filter:v", "visual.txt"]
         return ["-filter:v", (work / "visual.txt").read_text(encoding="utf-8")]
+
+    def visual_encoding(self, options):
+        if options.video_profile not in VIDEO_PROFILES:
+            raise ValueError("Неизвестный профиль визуализации")
+        profile = VIDEO_PROFILES[options.video_profile]
+        if self._video_encoders is None:
+            listing = self.run([self.ffmpeg, "-hide_banner", "-encoders"], capture=True)
+            self._video_encoders = set(re.findall(r"^\s*V\S{5}\s+(\S+)", listing, re.MULTILINE))
+        if profile.encoder not in self._video_encoders:
+            raise ValueError(f"В установленной сборке FFmpeg нет кодировщика {profile.encoder}. "
+                             "Установите сборку с этим кодировщиком или выберите другой профиль визуализации.")
+        if options.video_profile == "h264":
+            arguments = ("-preset", options.preset, "-tune", "stillimage", "-crf", str(options.crf))
+            self.log(f"Видео: H.264 — x264 {options.preset}, stillimage, CRF {options.crf}")
+        else:
+            arguments = profile.arguments
+            self.log("Видео: " + profile.label)
+        return ["-c:v", profile.encoder, *arguments]
 
     def analyze(self, source, start, duration, work):
         # Bounded memory and analysis time, independent of the length of the album.
@@ -246,6 +284,7 @@ class Converter:
             raise ValueError("Ширина и высота должны быть чётными")
         if not 1 <= options.fps <= 120 or not 0 <= options.crf <= 51 or not 0 <= options.flac_level <= 12:
             raise ValueError("Проверьте FPS (1–120), CRF (0–51) и уровень FLAC (0–12)")
+        video_arguments = self.visual_encoding(options) if options.video == "visual" else []
         self.log(f"Анализ: {source.name}")
         data = self.probe(source)
         audio = next((s for s in data.get("streams", []) if s.get("codec_type") == "audio"), None)
@@ -298,8 +337,7 @@ class Converter:
             if options.video == "copy":
                 command += ["-map", "0:v:0?", "-c:v", "copy"]
             elif options.video == "visual":
-                command += ["-map", "1:v:0", *self.video_filter(work), "-c:v", "libx264",
-                            "-preset", options.preset, "-tune", "stillimage", "-crf", str(options.crf),
+                command += ["-map", "1:v:0", *self.video_filter(work), *video_arguments,
                             "-pix_fmt", "yuv420p", "-t", str(duration)]
             command += ["-c:a", codec, "-ar", str(rate), "-ac", str(channels)]
             if codec == "flac":

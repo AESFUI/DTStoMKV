@@ -6,7 +6,9 @@ from dataclasses import replace
 from pathlib import Path
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 
-from .core import Converter, Options, Cancelled, SUPPORTED_EXTS
+from .core import Converter, Options, Cancelled, SUPPORTED_EXTS, VIDEO_PROFILES
+
+PROFILE_CHOICES = {profile.label: key for key, profile in VIDEO_PROFILES.items()}
 
 
 class App:
@@ -46,10 +48,18 @@ class App:
     def options(self, prefix, **kwargs):
         video = getattr(self, prefix + "_video_mode", None)
         return Options(codec=getattr(self, prefix + "_codec").get(),
+                       video_profile=PROFILE_CHOICES[getattr(self, prefix + "_video_profile").get()],
                        bit_depth=getattr(self, prefix + "_bit").get(),
                        sample_rate=getattr(self, prefix + "_rate").get(),
                        overwrite=self.overwrite.get(), bitrate=self.bitrate.get(),
                        **({"video": video.get()} | kwargs if video else kwargs))
+
+    def build_video_profile(self, frame, prefix, row):
+        ttk.Label(frame, text="Видеокодек:").grid(row=row, column=0, sticky="w", padx=5, pady=3)
+        variable = tk.StringVar(value=VIDEO_PROFILES["h264"].label)
+        setattr(self, prefix + "_video_profile", variable)
+        ttk.Combobox(frame, textvariable=variable, values=list(PROFILE_CHOICES), state="readonly",
+                     width=60).grid(row=row, column=1, sticky="w", padx=5, pady=3)
 
     def validate_paths(self, source, output):
         if not source or not output:
@@ -163,6 +173,7 @@ class App:
         self.s_track_title = tk.StringVar(value="Full Album"); ttk.Entry(self.s_vis_frame, textvariable=self.s_track_title, width=50).grid(row=1, column=1, **pad)
         ttk.Label(self.s_vis_frame, text="Разрешение:").grid(row=2, column=0, sticky='w', **pad)
         self.s_res = tk.StringVar(value="1280x720"); ttk.Combobox(self.s_vis_frame, textvariable=self.s_res, values=["1280x720","1920x1080"], width=14).grid(row=2, column=1, sticky='w', **pad)
+        self.build_video_profile(self.s_vis_frame, "s", 3)
 
         self.s_use_cue = tk.BooleanVar(value=False)
         ttk.Checkbutton(f, text="Добавить главы из CUE (без разбивки)", variable=self.s_use_cue, command=self.toggle_simple_cue).grid(row=r, column=0, columnspan=3, sticky='w', **pad); r+=1
@@ -249,6 +260,7 @@ class App:
         self.v_album = tk.StringVar(value="Unknown Album"); ttk.Entry(self.v_vis_frame, textvariable=self.v_album, width=50).grid(row=0, column=1, **pad)
         ttk.Label(self.v_vis_frame, text="Разрешение:").grid(row=1, column=0, sticky='w', **pad)
         self.v_res = tk.StringVar(value="1280x720"); ttk.Combobox(self.v_vis_frame, textvariable=self.v_res, values=["1280x720","1920x1080"], width=14).grid(row=1, column=1, sticky='w', **pad)
+        self.build_video_profile(self.v_vis_frame, "v", 2)
 
         af = ttk.LabelFrame(f, text="Аудио (битность применяется к LPCM)")
         af.grid(row=r, column=0, columnspan=3, sticky='we', **pad); r+=1
@@ -301,9 +313,13 @@ class App:
         vid_frame = ttk.LabelFrame(f, text="Видеодорожка для всех файлов")
         vid_frame.grid(row=r, column=0, columnspan=3, sticky='we', **pad); r+=1
         self.b_video_mode = tk.StringVar(value="none")
-        ttk.Radiobutton(vid_frame, text="Без видео (только аудио)", variable=self.b_video_mode, value="none").pack(anchor='w')
-        ttk.Radiobutton(vid_frame, text="Копировать видео (если есть)", variable=self.b_video_mode, value="copy").pack(anchor='w')
-        ttk.Radiobutton(vid_frame, text="Создать визуализацию", variable=self.b_video_mode, value="visual").pack(anchor='w')
+        ttk.Radiobutton(vid_frame, text="Без видео (только аудио)", variable=self.b_video_mode, value="none", command=self.toggle_batch_visual).pack(anchor='w')
+        ttk.Radiobutton(vid_frame, text="Копировать видео (если есть)", variable=self.b_video_mode, value="copy", command=self.toggle_batch_visual).pack(anchor='w')
+        ttk.Radiobutton(vid_frame, text="Создать визуализацию", variable=self.b_video_mode, value="visual", command=self.toggle_batch_visual).pack(anchor='w')
+        self.b_vis_frame = ttk.LabelFrame(f, text="Параметры визуализации")
+        self.b_vis_frame.grid(row=r, column=0, columnspan=3, sticky="we", **pad); r+=1
+        self.build_video_profile(self.b_vis_frame, "b", 0)
+        self.b_vis_frame.grid_remove()
         
         af = ttk.LabelFrame(f, text="Аудио (битность применяется к LPCM)")
         af.grid(row=r, column=0, columnspan=3, sticky='we', **pad); r+=1
@@ -325,6 +341,9 @@ class App:
         self.btn_batch_stop = ttk.Button(bf, text="⏹ Стоп", command=self.stop_processing, state='disabled')
         self.btn_batch_stop.pack(side='left', padx=5)
 
+    def toggle_batch_visual(self):
+        if self.b_video_mode.get() == "visual": self.b_vis_frame.grid()
+        else: self.b_vis_frame.grid_remove()
 
     def run_batch(self):
         source = Path(self.b_in_dir.get()).expanduser()

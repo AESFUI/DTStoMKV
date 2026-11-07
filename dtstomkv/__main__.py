@@ -3,7 +3,7 @@ import argparse
 import sys
 import threading
 
-from .core import Cancelled, Converter, Options
+from .core import Cancelled, Converter, Options, VIDEO_PROFILES
 
 
 def main(argv=None):
@@ -14,6 +14,8 @@ def main(argv=None):
     convert.add_argument("source")
     convert.add_argument("destination")
     convert.add_argument("--video", choices=("none", "copy", "visual"), default="none")
+    convert.add_argument("--video-profile", choices=tuple(VIDEO_PROFILES), default="h264",
+                         help="Профиль визуализации: av1 (screen/24), hevc (slow/27), vp9 (screen/17), h264 (прежний)")
     convert.add_argument("--codec", choices=("lpcm", "flac", "ac3", "truehd"), default="lpcm")
     convert.add_argument("--bit-depth", choices=("Auto", "16", "24", "32"), default="Auto")
     convert.add_argument("--sample-rate", default="Auto")
@@ -23,8 +25,8 @@ def main(argv=None):
     convert.add_argument("--resolution", default="1280x720")
     convert.add_argument("--bitrate", default="448k")
     convert.add_argument("--fps", type=int, default=10)
-    convert.add_argument("--crf", type=int, default=23)
-    convert.add_argument("--preset", default="ultrafast")
+    convert.add_argument("--crf", type=int, default=23, help="CRF профиля h264 (по умолчанию 23)")
+    convert.add_argument("--preset", default="ultrafast", help="Preset профиля h264 (по умолчанию ultrafast)")
     convert.add_argument("--flac-level", type=int, default=8)
     convert.add_argument("--overwrite", action="store_true")
     convert.add_argument("--ffmpeg")

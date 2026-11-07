@@ -6,7 +6,8 @@
 Возможности:
 
 - LPCM 16/24/32 bit, FLAC, AC3 и TrueHD; выбор частоты, сохранение числа каналов.
-- Конвертация без видео, копирование первой видеодорожки или цветная визуализация H.264.
+- Конвертация без видео, копирование первой видеодорожки или цветная визуализация
+  AV1, HEVC / H.265, VP9 либо H.264.
 - Главы и названия треков из однофайлового CUE, UTF-8/BOM и Windows-1251.
 - Визуализация с названием альбома, текущего трека, общим таймером и цветом по анализу аудио.
 - Формат исходного и выходного звука в журнале во всех режимах, включая пакетный;
@@ -54,6 +55,9 @@ py -3 -m venv .venv
 python -m dtstomkv convert input.dts output.mkv
 python -m dtstomkv convert input.mkv output.mkv --video copy --bit-depth 24
 python -m dtstomkv convert album.wav album.mkv --video visual --cue album.cue --album "Название альбома"
+python -m dtstomkv convert album.wav album-av1.mkv --video visual --video-profile av1
+python -m dtstomkv convert album.wav album-hevc.mkv --video visual --video-profile hevc
+python -m dtstomkv convert album.wav album-vp9.mkv --video visual --video-profile vp9
 python -m dtstomkv convert input.wav output.mkv --codec flac --flac-level 8
 python -m dtstomkv convert input.wav output.mkv --codec ac3 --bitrate 640k --sample-rate 48000
 python -m dtstomkv convert input.wav output.mkv --codec truehd --sample-rate 48000
@@ -69,7 +73,25 @@ FFmpeg и ffprobe ищутся через PATH. Произвольные пут�
 `DTSTOMKV_FFMPEG`, `DTSTOMKV_FFPROBE`, `DTSTOMKV_FONT` либо параметрами CLI
 `--ffmpeg`, `--ffprobe`, `--font`. В GUI используются те же переменные окружения.
 Автоматический шрифт: Arial в Windows, DejaVu Sans в Linux.
-Визуализация требует фильтр `drawtext` и кодировщик `libx264`.
+Визуализация требует фильтр `drawtext` и кодировщик выбранного профиля:
+
+| Профиль CLI | Вариант в GUI | Параметры |
+| --- | --- | --- |
+| `av1` | AV1 — libaom, screen, CRF 24 | `libaom-av1`, `-aom-params tune-content=screen -crf 24 -b:v 0` |
+| `hevc` | HEVC / H.265 — x265 slow, CRF 27 | `libx265`, `-preset slow -crf 27` |
+| `vp9` | VP9 — libvpx, screen, CRF 17 | `libvpx-vp9`, `-tune-content screen -crf 17 -b:v 0` |
+| `h264` | H.264 — прежний вариант, по умолчанию | `libx264`, `-preset ultrafast -tune stillimage -crf 23` |
+
+Выбор доступен в параметрах визуализации всех трёх вкладок GUI, в том числе
+для пакетной обработки. Профили одинаковы в Linux и Windows; наличие библиотек
+определяется сборкой FFmpeg. Если кодировщика нет, приложение сообщает его имя
+до анализа треков; автоматической замены кодека нет. Проверка не нужна для режимов
+без видео и копирования видео.
+У новых профилей параметры фиксированы; CLI-параметры `--crf` и `--preset`
+по-прежнему изменяют только профиль `h264`. FPS и разрешение применяются ко всем
+профилям. `-b:v 0` включает режим постоянного качества без заданного видеобитрейта
+для AV1/VP9. Подробнее: [документация кодировщиков FFmpeg](https://ffmpeg.org/ffmpeg-codecs.html).
+
 Проверено с FFmpeg/ffprobe 9.0.2. Для FFmpeg 7+ граф фильтров загружается через
 `-/filter:v`; для более ранних версий используется `-filter:v` с содержимым графа.
 Удалённый в FFmpeg 9 параметр `-filter_script:v` больше не используется.
@@ -119,9 +141,11 @@ FLAC доступны в CLI. Вместо склейки отдельных MKV
 python -m unittest discover -s tests -v
 ```
 
-Тесты генерируют короткие аудио/видеофайлы и проверяют все четыре кодека,
+Тесты генерируют короткие аудио/видеофайлы и проверяют все четыре аудиокодека,
 главы, кириллицу и спецсимволы, копирование видео из DTS-контейнера,
-визуализацию, CLI, отмену и защиту выходных файлов. Нужны FFmpeg и ffprobe.
+четыре профиля визуализации, CLI, отмену и защиту выходных файлов. Для профилей
+проверяются декодирование видео, сохранность аудио и глав. Нужны FFmpeg и ffprobe.
+Проверки отсутствующих в сборке видеокодировщиков пропускаются.
 Без них интеграционные проверки пропускаются.
 Отдельная проверка GUI: `python tests/gui_smoke.py` (нужен дисплей; Linux —
 `xvfb-run -a python tests/gui_smoke.py`). Workflow GitHub Actions запускает проверки

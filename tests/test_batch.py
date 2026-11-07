@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import threading
 import unittest
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 try:
@@ -12,11 +13,36 @@ try:
 except ImportError:
     tk = None
 
-from dtstomkv.core import Converter
+from dtstomkv.core import Converter, VIDEO_PROFILES
 
 
 @unittest.skipUnless(tk and shutil.which("ffmpeg") and shutil.which("ffprobe"), "Tkinter and FFmpeg required")
 class BatchTests(unittest.TestCase):
+    def test_visual_profile_is_snapshotted_for_the_whole_batch(self):
+        from dtstomkv.gui import App
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            (folder / "first.wav").touch()
+            (folder / "second.wav").touch()
+            app = App.__new__(App)
+            app.events = queue.Queue()
+            app.stop_event = threading.Event()
+            master = tk.Tcl()
+            for name, value in {"b_in_dir": directory, "b_out_dir": "", "b_video_mode": "visual",
+                                "b_video_profile": VIDEO_PROFILES["hevc"].label,
+                                "b_codec": "lpcm", "b_bit": "Auto", "b_rate": "Auto", "bitrate": "448k"}.items():
+                setattr(app, name, tk.StringVar(master=master, value=value))
+            app.overwrite = tk.BooleanVar(master=master, value=False)
+            task = app.run_batch()
+            app.b_video_profile.set(VIDEO_PROFILES["av1"].label)
+            engine = Mock()
+            with patch.object(app, "converter", return_value=engine):
+                task()
+            self.assertEqual(engine.convert.call_count, 2)
+            for call in engine.convert.call_args_list:
+                self.assertEqual(call.args[2].video, "visual")
+                self.assertEqual(call.args[2].video_profile, "hevc")
+
     def test_snapshot_and_repeat_batch_with_uppercase_cue(self):
         from dtstomkv.gui import App
         with tempfile.TemporaryDirectory() as directory:
@@ -31,11 +57,14 @@ class BatchTests(unittest.TestCase):
             app.stop_event = threading.Event()
             master = tk.Tcl()
             for name, value in {"b_in_dir": directory, "b_out_dir": "", "b_video_mode": "none",
+                                "b_video_profile": VIDEO_PROFILES["hevc"].label,
                                 "b_codec": "flac", "b_bit": "Auto", "b_rate": "Auto", "bitrate": "448k"}.items():
                 setattr(app, name, tk.StringVar(master=master, value=value))
             app.overwrite = tk.BooleanVar(master=master, value=False)
             task = app.run_batch()
+            self.assertEqual(app.options("b").video_profile, "hevc")
             app.b_codec.set("invalid")  # Edits after launch must not change the queued job.
+            app.b_video_profile.set(VIDEO_PROFILES["vp9"].label)
             failures = []
             def run():
                 try:

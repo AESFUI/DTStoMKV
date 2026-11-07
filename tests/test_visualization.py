@@ -95,11 +95,13 @@ class VisualIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
             (work / "visual.txt").write_text("null", encoding="utf-8")
+            supports_file_filters = engine.video_filter(work)[0] == "-/filter:v"
             for version, option in (("9.0.2", "-/filter:v"), ("6.1", "-filter:v")):
                 engine._file_filters = None
                 with patch.object(engine, "run", return_value=f"ffmpeg version {version}"):
                     arguments = engine.video_filter(work)
                 self.assertEqual(arguments[0], option)
-                # Execute both strategies against the installed FFmpeg.
-                engine.run([engine.ffmpeg, "-v", "error", "-f", "lavfi", "-i", "color=s=32x32",
-                            *arguments, "-frames:v", "1", "-f", "null", "-"], cwd=work)
+                # Older FFmpeg installations can only execute the inline form.
+                if option == "-filter:v" or supports_file_filters:
+                    engine.run([engine.ffmpeg, "-v", "error", "-f", "lavfi", "-i", "color=s=32x32",
+                                *arguments, "-frames:v", "1", "-f", "null", "-"], cwd=work)
