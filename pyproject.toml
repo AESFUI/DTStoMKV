@@ -7,7 +7,7 @@ name = "dtstomkv"
 version = "0.2.0"
 description = "Linux and Windows audio to MKV converter with CUE chapters"
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.23"]
+dependencies = ["numpy>=1.23", "Pillow>=9.2"]
 
 [project.scripts]
 dtstomkv = "dtstomkv.__main__:main"

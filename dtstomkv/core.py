@@ -29,6 +29,73 @@ def detect_bit_depth(stream):
     return 24 if stream.get("codec_name") in ("mlp", "truehd", "flac", "dts") else 16
 
 
+def audio_format(codec, rate, channels, depth=None, layout=None):
+    name = {"lpcm": "LPCM", "ac3": "AC3", "truehd": "TrueHD"}.get(codec, codec.upper())
+    if codec.startswith("pcm_"):
+        name = "LPCM"
+    parts = [name]
+    if depth and (name in ("LPCM", "FLAC", "TrueHD", "MLP")):
+        parts.append(f"{depth} bit")
+    parts.extend((f"{rate / 1000:g} kHz", layout or f"{channels} ch"))
+    return " · ".join(parts)
+
+
+def fit_text(text, font, size, width, lines=2):
+    """Measure the actual TTF glyphs; keep all text within at most two lines."""
+    from PIL import ImageFont
+    text = " ".join(text.split())
+    for current in range(size, 0, -1):
+        face = ImageFont.truetype(str(font), current)
+        if face.getlength(text) <= width:
+            return text, current
+        if lines == 1:
+            continue
+        breaks = [i for i, char in enumerate(text) if char == " "]
+        # Unbroken titles (catalogue numbers, CJK, etc.) can wrap between glyphs.
+        if not breaks:
+            breaks = range(1, len(text))
+        if breaks:
+            split = min(breaks, key=lambda i: max(face.getlength(text[:i].rstrip()),
+                                                 face.getlength(text[i:].lstrip())))
+            first, second = text[:split].rstrip(), text[split:].lstrip()
+            if max(face.getlength(first), face.getlength(second)) <= width:
+                return first + "\n" + second, current
+    raise ValueError("Название слишком длинное для выбранного разрешения")
+
+
+def sound_features(samples, sample_rate=22050):
+    import numpy as np
+    rms = float(np.sqrt(np.mean(samples ** 2))) if len(samples) else 0.0
+    peak = float(np.max(np.abs(samples))) if len(samples) else 0.0
+    if len(samples) < 2048:
+        samples = np.pad(samples, (0, 2048 - len(samples)))
+    frames = samples[:len(samples) // 2048 * 2048].reshape(-1, 2048)
+    spectrum = np.abs(np.fft.rfft(frames * np.hanning(2048), axis=1))
+    power = (spectrum ** 2).mean(axis=0)
+    frequencies = np.fft.rfftfreq(2048, 1 / sample_rate)
+    total = max(float(power.sum()), 1e-12)
+    centroid = float(np.dot(power, frequencies) / total)
+    bass = float(power[frequencies < 250].sum() / total)
+    treble = float(power[frequencies > 3000].sum() / total)
+    normalized = spectrum / np.maximum(spectrum.sum(axis=1, keepdims=True), 1e-12)
+    flux = float(np.maximum(np.diff(normalized, axis=0), 0).sum(axis=1).mean()) if len(frames) > 1 else 0.0
+    return dict(centroid=centroid, bass=bass, treble=treble, flux=flux,
+                rms=rms, crest=peak / max(rms, 1e-12))
+
+
+def sound_color(features):
+    # Absolute acoustic mapping: a track keeps its color in any album/order.
+    import math
+    brightness = min(1, math.log1p(features["centroid"] / 100) / math.log(81))
+    hue = (0.04 + 0.72 * brightness + 0.13 * features["treble"]
+           - 0.12 * features["bass"] + 0.10 * features["flux"]) % 1
+    saturation = min(0.95, 0.55 + 0.25 * features["bass"] + 0.15 * features["flux"])
+    # Dark background preserves contrast with white text, even for loud tracks.
+    value = min(0.43, 0.20 + 0.16 * min(1, features["rms"] * 5)
+                + 0.07 * min(1, features["crest"] / 12))
+    return "0x" + "".join(f"{round(v * 255):02x}" for v in colorsys.hsv_to_rgb(hue, saturation, value))
+
+
 @dataclass(frozen=True)
 class Options:
     video: str = "none"
@@ -54,6 +121,7 @@ class Converter:
         self.font = font
         self.log = log
         self.stop_event = stop_event if stop_event is not None else threading.Event()
+        self._file_filters = None
 
     def run(self, command, cwd=None, capture=False):
         if self.stop_event.is_set():
@@ -88,56 +156,71 @@ class Converter:
         return json.loads(self.run([self.ffprobe, "-v", "error", "-of", "json",
                                     "-show_streams", "-show_format", str(path)], capture=True))
 
+    def video_filter(self, work):
+        if self._file_filters is None:
+            version = self.run([self.ffmpeg, "-version"], capture=True)
+            match = re.search(r"ffmpeg version (?:n)?(\d+)\.", version)
+            # File-valued options were introduced in FFmpeg 7. Unknown builds
+            # can always accept the filtergraph directly (no shell involved).
+            self._file_filters = bool(match and int(match[1]) >= 7)
+        if self._file_filters:
+            return ["-/filter:v", "visual.txt"]
+        return ["-filter:v", (work / "visual.txt").read_text(encoding="utf-8")]
+
     def analyze(self, source, start, duration, work):
         # Bounded memory and analysis time, independent of the length of the album.
         import numpy as np
-        self.run([self.ffmpeg, "-v", "error", "-y", "-ss", str(start), "-i", str(source),
-                  "-t", str(min(30, duration)), "-map", "0:a:0", "-ac", "1", "-ar", "22050",
-                  "-c:a", "pcm_s16le", "analysis.wav"], cwd=work)
-        with wave.open(str(work / "analysis.wav")) as audio:
-            samples = np.frombuffer(audio.readframes(audio.getnframes()), dtype="<i2").astype(float) / 32768
-        rms = float(np.sqrt(np.mean(samples ** 2))) if len(samples) else 0
-        if len(samples) < 2048:
-            samples = np.pad(samples, (0, 2048 - len(samples)))
-        frames = samples[:len(samples) // 2048 * 2048].reshape(-1, 2048)
-        spectrum = np.abs(np.fft.rfft(frames * np.hanning(2048), axis=1))
-        weights = spectrum.sum(axis=0)
-        centroid = float(np.dot(weights, np.fft.rfftfreq(2048, 1 / 22050)) / max(weights.sum(), 1e-12))
-        return centroid, rms
+        excerpts = []
+        length = min(10, duration) if duration > 30 else duration
+        offsets = [fraction * (duration - length) for fraction in (0.1, 0.5, 0.9)] if duration > 30 else [0]
+        for offset in offsets:
+            self.run([self.ffmpeg, "-v", "error", "-y", "-ss", str(start + offset), "-i", str(source),
+                      "-t", str(length), "-map", "0:a:0", "-ac", "1", "-ar", "22050",
+                      "-c:a", "pcm_s16le", "analysis.wav"], cwd=work)
+            with wave.open(str(work / "analysis.wav")) as audio:
+                excerpts.append(np.frombuffer(audio.readframes(audio.getnframes()), dtype="<i2").astype(float) / 32768)
+        return sound_features(np.concatenate(excerpts))
 
-    def visualization(self, source, tracks, duration, options, work):
+    def visualization(self, source, tracks, duration, options, work, format_label=""):
         shutil.copyfile(font_path(self.font), work / "font.ttf")
-        (work / "album.txt").write_text(options.album or source.stem, encoding="utf-8")
+        width, height = map(int, options.resolution.split("x"))
+        scale = min(width / 1280, height / 720)
+        available = max(1, int(width * 0.9))
+        album, album_size = fit_text(options.album or source.stem, work / "font.ttf",
+                                     max(1, round(48 * scale)), available, lines=1)
+        (work / "album.txt").write_text(album, encoding="utf-8")
         analysis = []
         for i, track in enumerate(tracks):
             end = tracks[i + 1]["start"] if i + 1 < len(tracks) else duration
             self.log(f"Анализ трека {track['num']}: {track['title']}")
             analysis.append(self.analyze(source, track["start"], end - track["start"], work))
-        ranked = sorted(range(len(tracks)), key=lambda i: analysis[i][0])
-        ranks = {index: rank for rank, index in enumerate(ranked)}
         filters = []
         for i, track in enumerate(tracks):
             start = 0 if i == 0 else track["start"]
             end = tracks[i + 1]["start"] if i + 1 < len(tracks) else duration
-            hue = ranks[i] / max(1, len(tracks) - 1)
-            rgb = colorsys.hsv_to_rgb(hue, min(1, max(0.4, analysis[i][1] * 5)), 0.4)
-            color = "0x" + "".join(f"{round(v * 255):02x}" for v in rgb)
+            color = sound_color(analysis[i])
             enable = f"gte(t,{start})*lt(t,{end})"
             filters.append(f"drawbox=color={color}:t=fill:enable='{enable}'")
         filters.append("drawtext=fontfile=font.ttf:textfile=album.txt:expansion=none:"
-                       "fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2-80")
+                       f"fontcolor=white:fontsize={album_size}:x=(w-text_w)/2:y=h*0.25")
         for i, track in enumerate(tracks):
             start = 0 if i == 0 else track["start"]
             end = tracks[i + 1]["start"] if i + 1 < len(tracks) else duration
             title = f"{track['num']:02d}. {track['title']}" if len(tracks) > 1 else track["title"]
+            title, size = fit_text(title, work / "font.ttf", max(1, round(36 * scale)), available)
             (work / f"track{i}.txt").write_text(title, encoding="utf-8")
             filters.append(f"drawtext=fontfile=font.ttf:textfile=track{i}.txt:expansion=none:"
-                           f"fontcolor=white:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2+20:"
+                           f"fontcolor=white:fontsize={size}:text_align=C:line_spacing={max(1, round(8 * scale))}:"
+                           f"x=(w-text_w)/2:y=h*0.5-text_h/2:"
                            f"enable='gte(t,{start})*lt(t,{end})'")
         total = f"{int(duration)//3600:02d}\\:{int(duration)%3600//60:02d}\\:{int(duration)%60:02d}"
         elapsed = r"%{pts\:hms}"
         filters.append(f"drawtext=fontfile=font.ttf:text='{elapsed} / {total}':"
-                       "fontcolor=white:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2+80")
+                       f"fontcolor=white:fontsize={max(1, round(30 * scale))}:x=(w-text_w)/2:y=h*0.72")
+        label, label_size = fit_text(format_label, work / "font.ttf", max(1, round(24 * scale)), available, lines=1)
+        (work / "format.txt").write_text(label, encoding="utf-8")
+        filters.append("drawtext=fontfile=font.ttf:textfile=format.txt:expansion=none:"
+                       f"fontcolor=white:fontsize={label_size}:x=(w-text_w)/2:y=h*0.85")
         (work / "visual.txt").write_text(",".join(filters), encoding="utf-8")
 
     def convert(self, source, destination, options=None):
@@ -173,6 +256,11 @@ class Converter:
         if rate <= 0:
             raise ValueError("Частота должна быть положительной")
         channels = int(audio.get("channels", 2))
+        self.log("Исходный звук: " + audio_format(audio.get("codec_name", "unknown"),
+                 int(audio.get("sample_rate") or rate), channels, detect_bit_depth(audio), audio.get("channel_layout")))
+        format_label = audio_format(options.codec, rate, channels,
+                                    depth if options.codec == "lpcm" else None, audio.get("channel_layout"))
+        self.log("Выходной звук: " + format_label)
         codec = options.codec
         if codec == "lpcm":
             codec = "pcm_s32le" if depth >= 32 else "pcm_s24le" if depth >= 24 else "pcm_s16le"
@@ -196,7 +284,7 @@ class Converter:
                 visual_tracks = tracks or [{"num": 1, "title": options.title, "start": 0.0}]
                 if tracks and tracks[-1]["start"] >= duration:
                     raise ValueError("CUE выходит за длительность аудио")
-                self.visualization(source, visual_tracks, duration, options, work)
+                self.visualization(source, visual_tracks, duration, options, work, format_label)
                 command += ["-f", "lavfi", "-i", f"color=c=black:s={options.resolution}:r={options.fps}"]
                 metadata_index = 2
             if tracks:
@@ -210,7 +298,7 @@ class Converter:
             if options.video == "copy":
                 command += ["-map", "0:v:0?", "-c:v", "copy"]
             elif options.video == "visual":
-                command += ["-map", "1:v:0", "-filter_script:v", "visual.txt", "-c:v", "libx264",
+                command += ["-map", "1:v:0", *self.video_filter(work), "-c:v", "libx264",
                             "-preset", options.preset, "-tune", "stillimage", "-crf", str(options.crf),
                             "-pix_fmt", "yuv420p", "-t", str(duration)]
             command += ["-c:a", codec, "-ar", str(rate), "-ac", str(channels)]

@@ -24,6 +24,7 @@ class BatchTests(unittest.TestCase):
             engine = Converter(log=lambda message: None)
             subprocess.run([engine.ffmpeg, "-v", "error", "-f", "lavfi", "-i",
                             "sine=duration=0.5:sample_rate=48000", str(folder / "album.wav")], check=True)
+            shutil.copyfile(folder / "album.wav", folder / "without-cue.wav")
             (folder / "album.CUE").write_text('TRACK 01 AUDIO\nTITLE "Track"\nINDEX 01 00:00:00\n')
             app = App.__new__(App)
             app.events = queue.Queue()
@@ -47,10 +48,13 @@ class BatchTests(unittest.TestCase):
             self.assertFalse(worker.is_alive())
             self.assertEqual(failures, [])
             self.assertEqual(engine.probe(folder / "album.mkv")["streams"][0]["codec_name"], "flac")
+            self.assertEqual(engine.probe(folder / "without-cue.mkv")["streams"][0]["codec_name"], "flac")
             app.b_codec.set("flac")
             app.run_batch()()
             messages = []
             while not app.events.empty():
                 messages.append(app.events.get()[1])
-            self.assertIn("Найдено файлов: 1", messages)
+            self.assertIn("Найдено файлов: 2", messages)
+            self.assertEqual(sum(message.startswith("Исходный звук:") for message in messages), 2)
+            self.assertEqual(sum(message.startswith("Выходной звук: FLAC") for message in messages), 2)
             self.assertFalse((folder / "album_lpcm.mkv").exists())
