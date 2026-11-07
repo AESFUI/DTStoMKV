@@ -123,11 +123,11 @@ class ConversionTests(unittest.TestCase):
         output = self.directory / "keep.mkv"
         output.write_bytes(b"original")
         real_run = self.engine.run
-        def fail_encoding(command, cwd=None, capture=False):
+        def fail_encoding(command, cwd=None, capture=False, progress=None):
             if cwd:
                 (Path(cwd) / "result.mkv").write_bytes(b"partial output")
                 raise Cancelled("Остановлено пользователем")
-            return real_run(command, cwd=cwd, capture=capture)
+            return real_run(command, cwd=cwd, capture=capture, progress=progress)
         with patch.object(self.engine, "run", side_effect=fail_encoding):
             with self.assertRaises(Cancelled):
                 self.engine.convert(self.source, output, Options(overwrite=True))

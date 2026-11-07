@@ -1,5 +1,6 @@
 """Run under a display (or xvfb-run); asserts construction of all three tabs."""
 import tkinter as tk
+from pathlib import Path
 
 from dtstomkv.gui import App
 from dtstomkv.core import VIDEO_PROFILES
@@ -15,6 +16,9 @@ for prefix in ("s", "v", "b"):
     for key, profile in VIDEO_PROFILES.items():
         getattr(app, prefix + "_video_profile").set(profile.label)
         assert app.options(prefix).video_profile == key
+for prefix in ("s", "v"):
+    getattr(app, prefix + "_in").set(str(Path("music") / "Альбом.dts"))
+    assert Path(getattr(app, prefix + "_out").get()) == Path("music/Альбом.mkv")
 app.b_video_mode.set("visual")
 app.toggle_batch_visual()
 root.update()

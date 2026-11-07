@@ -39,6 +39,70 @@ class Cancelled(RuntimeError):
     pass
 
 
+def default_output(source, directory=None):
+    source = Path(source).expanduser()
+    return (Path(directory).expanduser() if directory is not None else source.parent) / source.with_suffix(".mkv").name
+
+
+class EncodingProgress:
+    """Tail FFmpeg's progress file without blocking pipes or platform-specific I/O."""
+    def __init__(self, path, duration, log):
+        self.path, self.duration, self.log = Path(path), duration, log
+        self.offset, self.pending, self.values = 0, b"", {}
+        self.seconds, self.speed = 0.0, ""
+
+    @staticmethod
+    def timestamp(seconds):
+        seconds = max(0, int(seconds))
+        return f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}"
+
+    def report(self, complete=False):
+        if complete:
+            status = "100.0%" if self.duration > 0 else "завершено"
+        else:
+            status = f"{min(99.9, 100 * self.seconds / self.duration):.1f}%" if self.duration > 0 else ""
+        timing = self.timestamp(self.seconds)
+        if self.duration > 0:
+            timing += " / " + self.timestamp(self.duration)
+        parts = [part for part in (status, timing, f"скорость {self.speed}" if self.speed else "") if part]
+        self.log("Кодирование: " + " · ".join(parts))
+
+    def poll(self):
+        try:
+            with self.path.open("rb") as stream:
+                stream.seek(self.offset)
+                chunk = stream.read()
+                self.offset = stream.tell()
+        except FileNotFoundError:
+            return
+        lines = (self.pending + chunk).split(b"\n")
+        self.pending = lines.pop()
+        for line in lines:
+            key, separator, value = line.decode("ascii", errors="replace").strip().partition("=")
+            if not separator:
+                continue
+            self.values[key] = value
+            if key != "progress":
+                continue
+            try:
+                # Despite its name, FFmpeg's legacy out_time_ms is also in microseconds.
+                micros = int(self.values.get("out_time_us", self.values.get("out_time_ms", "0")))
+                self.seconds = max(self.seconds, micros / 1_000_000)
+            except ValueError:  # N/A before the first encoded frame.
+                pass
+            speed = self.values.get("speed", "").strip()
+            if speed and speed != "N/A":
+                self.speed = speed
+            if value == "continue":
+                self.report()
+            self.values.clear()
+
+    def complete(self):
+        if self.duration > 0:
+            self.seconds = self.duration
+        self.report(complete=True)
+
+
 def detect_bit_depth(stream):
     for key in ("bits_per_raw_sample", "bits_per_sample"):
         value = int(stream.get(key) or 0)
@@ -143,7 +207,7 @@ class Converter:
         self._file_filters = None
         self._video_encoders = None
 
-    def run(self, command, cwd=None, capture=False):
+    def run(self, command, cwd=None, capture=False, progress=None):
         if self.stop_event.is_set():
             raise Cancelled("Остановлено пользователем")
         with tempfile.TemporaryFile() as errors, tempfile.TemporaryFile() as output:
@@ -154,12 +218,16 @@ class Converter:
                 while process.poll() is None:
                     if self.stop_event.wait(0.1):
                         raise Cancelled("Остановлено пользователем")
+                    if progress is not None:
+                        progress.poll()
                 if self.stop_event.is_set():
                     raise Cancelled("Остановлено пользователем")
                 if process.returncode:
                     errors.seek(0, os.SEEK_END)
                     errors.seek(max(0, errors.tell() - 4000))
                     raise RuntimeError(errors.read().decode("utf-8", errors="replace"))
+                if progress is not None:
+                    progress.poll()
                 if capture:
                     output.seek(0)
                     return output.read().decode("utf-8")
@@ -267,7 +335,7 @@ class Converter:
         if not source.is_file():
             raise ValueError(f"Входной файл не найден: {source}")
         if source == destination or (destination.exists() and os.path.samefile(source, destination)):
-            raise ValueError("Входной и выходной файлы совпадают")
+            raise ValueError("Входной и выходной файлы совпадают. Выберите другую папку для результата MKV.")
         if destination.suffix.lower() != ".mkv":
             raise ValueError("Выходной файл должен иметь расширение .mkv")
         if destination.exists() and not options.overwrite:
@@ -317,7 +385,8 @@ class Converter:
         # Stage beside the destination: failure/cancellation never destroys an existing file.
         with tempfile.TemporaryDirectory(prefix="dtstomkv-", dir=destination.parent) as directory:
             work = Path(directory)
-            command = [self.ffmpeg, "-v", "error", "-nostdin", "-y", "-i", str(source)]
+            command = [self.ffmpeg, "-v", "error", "-nostdin", "-nostats", "-y",
+                       "-stats_period", "1", "-progress", "progress.txt", "-i", str(source)]
             metadata_index = 1
             if options.video == "visual":
                 visual_tracks = tracks or [{"num": 1, "title": options.title, "start": 0.0}]
@@ -348,9 +417,12 @@ class Converter:
                 command += ["-strict", "experimental"]
             command += ["result.mkv"]
             self.log("Конвертация...")
-            self.run(command, cwd=work)
+            progress = EncodingProgress(work / "progress.txt", duration, self.log)
+            progress.report()
+            self.run(command, cwd=work, progress=progress)
             if self.stop_event.is_set():
                 raise Cancelled("Остановлено пользователем")
+            progress.complete()
             if options.overwrite:
                 os.replace(work / "result.mkv", destination)
             else:

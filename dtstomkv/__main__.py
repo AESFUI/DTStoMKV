@@ -2,8 +2,9 @@
 import argparse
 import sys
 import threading
+from pathlib import Path
 
-from .core import Cancelled, Converter, Options, VIDEO_PROFILES
+from .core import Cancelled, Converter, Options, VIDEO_PROFILES, default_output
 
 
 def main(argv=None):
@@ -12,7 +13,7 @@ def main(argv=None):
     commands.add_parser("gui", help="Открыть графический интерфейс")
     convert = commands.add_parser("convert", help="Конвертировать один файл")
     convert.add_argument("source")
-    convert.add_argument("destination")
+    convert.add_argument("destination", nargs="?", help="Выходной файл или папка; по умолчанию <имя входного файла>.mkv")
     convert.add_argument("--video", choices=("none", "copy", "visual"), default="none")
     convert.add_argument("--video-profile", choices=tuple(VIDEO_PROFILES), default="h264",
                          help="Профиль визуализации: av1 (screen/24), hevc (slow/27), vp9 (screen/17), h264 (прежний)")
@@ -41,7 +42,10 @@ def main(argv=None):
     try:
         engine = Converter(args.ffmpeg, args.ffprobe, args.font, stop_event=stop)
         options = Options(**{key: getattr(args, key) for key in Options.__dataclass_fields__})
-        engine.convert(args.source, args.destination, options)
+        destination = default_output(args.source) if args.destination is None else Path(args.destination).expanduser()
+        if destination.is_dir():
+            destination = default_output(args.source, destination)
+        engine.convert(args.source, destination, options)
         return 0
     except (KeyboardInterrupt, Cancelled):
         stop.set()

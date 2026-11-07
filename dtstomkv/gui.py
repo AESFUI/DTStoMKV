@@ -6,7 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 
-from .core import Converter, Options, Cancelled, SUPPORTED_EXTS, VIDEO_PROFILES
+from .core import Converter, Options, Cancelled, SUPPORTED_EXTS, VIDEO_PROFILES, default_output
 
 PROFILE_CHOICES = {profile.label: key for key, profile in VIDEO_PROFILES.items()}
 
@@ -82,9 +82,26 @@ class App:
             var.set(path)
 
     def browse_save(self, var):
-        path = filedialog.asksaveasfilename(defaultextension=".mkv", filetypes=[("MKV", "*.mkv")])
+        current = Path(var.get()).expanduser() if var.get() else None
+        path = filedialog.asksaveasfilename(defaultextension=".mkv", filetypes=[("MKV", "*.mkv")],
+                                          **({"initialfile": current.name, "initialdir": str(current.parent)} if current else {}))
         if path:
             var.set(path)
+
+    def update_output_name(self, prefix, *_):
+        source = getattr(self, prefix + "_in").get()
+        output = getattr(self, prefix + "_out")
+        previous = getattr(self, prefix + "_last_source", "")
+        if source:
+            directory = Path(source).expanduser().parent
+            if output.get() and previous:
+                current_directory = Path(output.get()).expanduser().parent
+                if current_directory != Path(previous).expanduser().parent:
+                    directory = current_directory
+            output.set(str(default_output(source, directory)))
+        else:
+            output.set("")
+        setattr(self, prefix + "_last_source", source)
 
     def start_task(self, factory):
         if self.is_running:
@@ -156,6 +173,7 @@ class App:
         self.s_out = tk.StringVar()
         ttk.Entry(f, textvariable=self.s_out, width=80).grid(row=r, column=1, **pad)
         ttk.Button(f, text="...", width=3, command=lambda: self.browse_save(self.s_out)).grid(row=r, column=2, **pad); r+=1
+        self.s_in.trace_add("write", lambda *_: self.update_output_name("s"))
 
         vid_frame = ttk.LabelFrame(f, text="Видеодорожка")
         vid_frame.grid(row=r, column=0, columnspan=3, sticky='we', **pad); r+=1
@@ -250,6 +268,7 @@ class App:
         ttk.Label(f, text="Выходной MKV:").grid(row=r, column=0, sticky='w', **pad)
         self.v_out = tk.StringVar(); ttk.Entry(f, textvariable=self.v_out, width=80).grid(row=r, column=1, **pad)
         ttk.Button(f, text="...", width=3, command=lambda: self.browse_save(self.v_out)).grid(row=r, column=2, **pad); r+=1
+        self.v_in.trace_add("write", lambda *_: self.update_output_name("v"))
 
         self.v_visualize = tk.BooleanVar(value=True)
         ttk.Checkbutton(f, text="Включить визуализацию (без нее просто добавит главы)", variable=self.v_visualize, command=self.toggle_visual_options).grid(row=r, column=0, columnspan=3, sticky='w', **pad); r+=1
@@ -353,10 +372,17 @@ class App:
         options = self.options("b")
         files = sorted(p for p in source.iterdir() if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS)
         # Do not feed outputs from previous runs back into the next run.
-        generated = {p.with_name(p.stem + "_lpcm.mkv") if p.suffix.lower() == ".mkv"
-                     else p.with_suffix(".mkv") for p in files}
+        generated = {default_output(p) for p in files if p.suffix.lower() != ".mkv"}
         if source.resolve() == output.resolve():
-            files = [p for p in files if p not in generated and not p.stem.endswith("_lpcm")]
+            files = [p for p in files if p not in generated]
+            if any(p.suffix.lower() == ".mkv" for p in files):
+                raise ValueError("Для входных MKV выберите другую папку сохранения: имя результата сохраняется.")
+        destinations = {}
+        for path in files:
+            target = default_output(path, output).resolve()
+            if target in destinations:
+                raise ValueError(f"Совпадает выходное имя: {destinations[target].name} и {path.name} → {target.name}")
+            destinations[target] = path
         cues = {p.stem.casefold(): p for p in source.iterdir() if p.suffix.lower() == ".cue"}
 
         def work():
@@ -366,11 +392,10 @@ class App:
             for i, path in enumerate(files, 1):
                 if self.stop_event.is_set():
                     raise Cancelled()
-                name = path.stem + "_lpcm.mkv" if path.suffix.lower() == ".mkv" else path.stem + ".mkv"
                 cue = str(cues[path.stem.casefold()]) if path.stem.casefold() in cues else ""
                 self.log_msg(f"[{i}/{len(files)}] {path.name}")
                 try:
-                    engine.convert(path, output / name, replace(options, cue=cue, album=path.stem))
+                    engine.convert(path, default_output(path, output), replace(options, cue=cue, album=path.stem))
                 except Cancelled:
                     raise
                 except Exception as error:
