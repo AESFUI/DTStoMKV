@@ -6,7 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 
-from .core import Converter, Options, Cancelled, SUPPORTED_EXTS, VIDEO_PROFILES, default_output
+from .core import Converter, Options, Cancelled, SUPPORTED_EXTS, VIDEO_PROFILES, default_output, detect_bit_depth
 
 PROFILE_CHOICES = {profile.label: key for key, profile in VIDEO_PROFILES.items()}
 
@@ -242,7 +242,11 @@ class App:
             for s in d.get("streams", []):
                 ct = s.get("codec_type")
                 if ct == "audio":
-                    lines.append(f"AUDIO: {s.get('codec_name')} | {s.get('sample_rate')} Hz | {s.get('channels')} ch | {s.get('bits_per_raw_sample','?')} bit")
+                    depth = detect_bit_depth(s)
+                    automatic = not any(int(s.get(key) or 0) > 0
+                                        for key in ("bits_per_raw_sample", "bits_per_sample"))
+                    depth_label = f"{depth} bit" + (" (Auto)" if automatic else "")
+                    lines.append(f"AUDIO: {s.get('codec_name')} | {s.get('sample_rate')} Hz | {s.get('channels')} ch | {depth_label}")
                 elif ct == "video":
                     lines.append(f"VIDEO: {s.get('codec_name')} | {s.get('width')}x{s.get('height')}")
             self.s_info.config(text="\n".join(lines))
