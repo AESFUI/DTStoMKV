@@ -57,6 +57,7 @@ class BatchNameTests(unittest.TestCase):
                             "b_codec": "lpcm", "b_bit": "Auto", "b_rate": "Auto", "bitrate": "448k"}.items():
             setattr(app, name, tk.StringVar(master=master, value=value))
         app.overwrite = tk.BooleanVar(master=master, value=True)
+        app.downmix_5_1 = tk.BooleanVar(master=master, value=True)
         return app
 
     def test_mkv_keeps_its_name_in_another_directory(self):

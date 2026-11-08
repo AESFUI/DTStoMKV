@@ -36,6 +36,9 @@ class App:
         ttk.Combobox(settings, textvariable=self.bitrate, values=["192k", "384k", "448k", "640k"],
                      width=8, state="readonly").pack(side="left", padx=5)
         self.overwrite = tk.BooleanVar(value=False)
+        self.downmix_5_1 = tk.BooleanVar(value=True)
+        ttk.Checkbutton(root, text="Сводить источники выше 5.1 в 5.1 (5.1 и ниже — как в исходнике)",
+                        variable=self.downmix_5_1).pack(anchor="w")
         ttk.Checkbutton(root, text="Перезаписывать существующие выходные файлы", variable=self.overwrite).pack(anchor="w")
         self.log = scrolledtext.ScrolledText(root, height=10)
         self.log.pack(fill="both", expand=True, padx=5, pady=5)
@@ -51,6 +54,7 @@ class App:
                        video_profile=PROFILE_CHOICES[getattr(self, prefix + "_video_profile").get()],
                        bit_depth=getattr(self, prefix + "_bit").get(),
                        sample_rate=getattr(self, prefix + "_rate").get(),
+                       downmix_5_1=self.downmix_5_1.get(),
                        overwrite=self.overwrite.get(), bitrate=self.bitrate.get(),
                        **({"video": video.get()} | kwargs if video else kwargs))
 

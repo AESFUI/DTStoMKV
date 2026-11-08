@@ -66,6 +66,36 @@ class ConversionTests(unittest.TestCase):
                 self.assertEqual(chapters[0]["tags"]["title"], "Первый: 50% ; # = '")
                 self.assertEqual(float(chapters[1]["start_time"]), 0.8)
 
+    def test_channel_limit_and_preservation(self):
+        for layout, channels in (("7.1", 8), ("6.1", 7), ("5.1", 6),
+                                 ("5.0", 5), ("4.0", 4), ("stereo", 2), ("mono", 1)):
+            source = self.directory / f"{layout}.wav"
+            self.ffmpeg("-f", "lavfi", "-i", f"anullsrc=r=48000:cl={layout}",
+                        "-t", "0.2", "-c:a", "pcm_s24le", str(source))
+            for codec in ("lpcm", "flac", "ac3", "truehd"):
+                with self.subTest(layout=layout, codec=codec):
+                    output = self.directory / f"{layout}-{codec}.mkv"
+                    messages = []
+                    engine = Converter(log=messages.append)
+                    engine.convert(source, output, Options(codec=codec))
+                    audio = engine.probe(output)["streams"][0]
+                    self.assertEqual(audio["channels"], min(channels, 6))
+                    if channels > 6:
+                        # PCM in Matroska may expose only the channel count to ffprobe.
+                        if codec != "lpcm":
+                            self.assertIn(audio["channel_layout"], ("5.1", "5.1(side)"))
+                        self.assertTrue(any(line.startswith("Выходной звук:") and "5.1" in line
+                                            for line in messages))
+            if channels > 6:
+                output = self.directory / f"{layout}-original.mkv"
+                result = subprocess.run([sys.executable, "-m", "dtstomkv", "convert", str(source),
+                                         str(output), "--no-downmix-5-1"], capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.engine.probe(output)["streams"][0]["channels"], channels)
+                with self.assertRaisesRegex(ValueError, "максимум 6 каналов"):
+                    self.engine.convert(source, self.directory / "invalid.mkv",
+                                        Options(codec="ac3", downmix_5_1=False))
+
     def test_copy_video_from_dts_container(self):
         source = self.directory / "video dts.mkv"
         self.ffmpeg("-f", "lavfi", "-i", "color=s=320x240:r=10:d=1.6", "-i", str(self.source),

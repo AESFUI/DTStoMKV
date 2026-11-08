@@ -196,6 +196,7 @@ class Options:
     flac_level: int = 8
     overwrite: bool = False
     video_profile: str = "h264"
+    downmix_5_1: bool = True
 
 
 class Converter:
@@ -366,8 +367,13 @@ class Converter:
         channels = int(audio.get("channels", 2))
         self.log("Исходный звук: " + audio_format(audio.get("codec_name", "unknown"),
                  int(audio.get("sample_rate") or rate), channels, detect_bit_depth(audio), audio.get("channel_layout")))
+        downmix = options.downmix_5_1 and channels > 6
+        layout = audio.get("channel_layout")
+        if downmix:
+            channels = 6
+            layout = "5.1(side)" if options.codec == "truehd" else "5.1"
         format_label = audio_format(options.codec, rate, channels,
-                                    depth if options.codec == "lpcm" else None, audio.get("channel_layout"))
+                                    depth if options.codec == "lpcm" else None, layout)
         self.log("Выходной звук: " + format_label)
         codec = options.codec
         if codec == "lpcm":
@@ -410,6 +416,8 @@ class Converter:
                 command += ["-map", "1:v:0", *self.video_filter(work), *video_arguments,
                             "-pix_fmt", "yuv420p", "-t", str(duration)]
             command += ["-c:a", codec, "-ar", str(rate), "-ac", str(channels)]
+            if downmix:
+                command += ["-channel_layout:a", layout]
             if codec == "flac":
                 command += ["-compression_level", str(options.flac_level)]
             elif codec == "ac3":
