@@ -20,8 +20,10 @@ def main(argv=None):
     convert.add_argument("--codec", choices=("lpcm", "flac", "ac3", "truehd"), default="lpcm")
     convert.add_argument("--bit-depth", choices=("Auto", "16", "24", "32"), default="Auto")
     convert.add_argument("--sample-rate", default="Auto")
-    convert.add_argument("--downmix-5-1", action=argparse.BooleanOptionalAction, default=True,
-                         help="Понижать число каналов до 5.1 только у источников выше 5.1 (включено по умолчанию)")
+    convert.add_argument("--normalize-channels", "--downmix-5-1", dest="normalize_channels",
+                         action=argparse.BooleanOptionalAction, default=True,
+                         help="Назначать каналы в 5.1/7.1, заполняя отсутствующие тишиной (включено по умолчанию; "
+                              "--downmix-5-1 — прежнее имя опции)")
     convert.add_argument("--cue", default="")
     convert.add_argument("--album", default="")
     convert.add_argument("--title", default="Full Album")

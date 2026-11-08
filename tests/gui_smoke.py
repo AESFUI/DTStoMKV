@@ -13,10 +13,10 @@ assert len(app.nb.tabs()) == 3
 for prefix in ("s", "v", "b"):
     assert app.options(prefix).codec == "lpcm"
     assert app.options(prefix).video_profile == "h264"
-    assert app.options(prefix).downmix_5_1 is True
-    app.downmix_5_1.set(False)
-    assert app.options(prefix).downmix_5_1 is False
-    app.downmix_5_1.set(True)
+    assert app.options(prefix).normalize_channels is True
+    app.normalize_channels.set(False)
+    assert app.options(prefix).normalize_channels is False
+    app.normalize_channels.set(True)
     for key, profile in VIDEO_PROFILES.items():
         getattr(app, prefix + "_video_profile").set(profile.label)
         assert app.options(prefix).video_profile == key

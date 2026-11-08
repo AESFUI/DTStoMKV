@@ -112,6 +112,50 @@ def detect_bit_depth(stream):
     return 24 if stream.get("codec_name") in ("mlp", "truehd", "flac", "dts") else 16
 
 
+def normalized_channel_map(layout, channels, codec):
+    """Return an explicit speaker map, preserving signals and padding with silence."""
+    if not layout and channels in (1, 2):
+        return channels, layout, ""
+    if (layout, channels) in (("mono", 1), ("stereo", 2), ("5.1", 6),
+                              ("5.1(side)", 6), ("7.1", 8)):
+        return channels, layout, ""
+    # A missing speaker map cannot safely be inferred from the channel count.
+    layouts = {
+        "2.1": "FL FR LFE", "3.0": "FL FR FC", "3.0(back)": "FL FR BC",
+        "3.1": "FL FR FC LFE", "4.0": "FL FR FC BC", "4.1": "FL FR FC LFE BC",
+        "quad": "FL FR BL BR", "quad(side)": "FL FR SL SR",
+        "5.0": "FL FR FC BL BR", "5.0(side)": "FL FR FC SL SR",
+        "6.0": "FL FR FC BC SL SR", "hexagonal": "FL FR FC BL BR BC",
+        "6.1": "FL FR FC LFE BC SL SR", "6.1(back)": "FL FR FC LFE BL BR BC",
+        "7.0": "FL FR FC BL BR SL SR",
+    }
+    speakers = layouts.get(layout, "").split()
+    if len(speakers) != channels:
+        raise ValueError(f"Нельзя безопасно назначить каналы для раскладки {layout or 'неизвестно'} "
+                         f"({channels} ch). Отключите нормализацию каналов, чтобы сохранить исходник.")
+    surround = set(speakers) & {"BL", "BR", "SL", "SR"}
+    target = "7.1" if channels > 6 or ("BC" in speakers and surround) else "5.1"
+    if target == "5.1" and codec == "truehd":
+        target = "5.1(side)"
+    outputs = ("FL FR FC LFE BL BR SL SR" if target == "7.1" else
+               "FL FR FC LFE SL SR" if target == "5.1(side)" else "FL FR FC LFE BL BR").split()
+    assignments = {speaker: speaker for speaker in speakers if speaker in outputs}
+    if target != "7.1":
+        for rear, side in (("BL", "SL"), ("BR", "SR")):
+            destination, alternate = (side, rear) if target == "5.1(side)" else (rear, side)
+            if alternate in speakers:
+                assignments[destination] = alternate
+    if "BC" in speakers:
+        if target == "7.1" and "BL" in speakers:
+            assignments.update(SL="BL", SR="BR")
+        left, right = ("SL", "SR") if target == "5.1(side)" else ("BL", "BR")
+        assignments.update({left: "0.7071067811865476*BC", right: "0.7071067811865476*BC"})
+    # Refer to a real input channel with a zero coefficient for silent outputs.
+    pan = "pan=" + target + "|" + "|".join(
+        f"{speaker}={assignments.get(speaker, '0*FL')}" for speaker in outputs)
+    return len(outputs), target, pan
+
+
 def audio_format(codec, rate, channels, depth=None, layout=None):
     name = {"lpcm": "LPCM", "ac3": "AC3", "truehd": "TrueHD"}.get(codec, codec.upper())
     if codec.startswith("pcm_"):
@@ -196,7 +240,7 @@ class Options:
     flac_level: int = 8
     overwrite: bool = False
     video_profile: str = "h264"
-    downmix_5_1: bool = True
+    normalize_channels: bool = True
 
 
 class Converter:
@@ -367,11 +411,12 @@ class Converter:
         channels = int(audio.get("channels", 2))
         self.log("Исходный звук: " + audio_format(audio.get("codec_name", "unknown"),
                  int(audio.get("sample_rate") or rate), channels, detect_bit_depth(audio), audio.get("channel_layout")))
-        downmix = options.downmix_5_1 and channels > 6
         layout = audio.get("channel_layout")
-        if downmix:
-            channels = 6
-            layout = "5.1(side)" if options.codec == "truehd" else "5.1"
+        channel_filter = ""
+        if options.normalize_channels:
+            channels, layout, channel_filter = normalized_channel_map(layout, channels, options.codec)
+        if channel_filter:
+            self.log("Назначение каналов: " + channel_filter)
         format_label = audio_format(options.codec, rate, channels,
                                     depth if options.codec == "lpcm" else None, layout)
         self.log("Выходной звук: " + format_label)
@@ -379,7 +424,7 @@ class Converter:
         if codec == "lpcm":
             codec = "pcm_s32le" if depth >= 32 else "pcm_s24le" if depth >= 24 else "pcm_s16le"
         if codec in ("ac3", "truehd") and channels > 6:
-            raise ValueError(f"{codec}: поддерживается максимум 6 каналов")
+            raise ValueError(f"{codec}: поддерживается максимум 6 каналов. Для сохранения 7.1 выберите LPCM или FLAC.")
         if codec == "ac3" and rate not in (32000, 44100, 48000):
             raise ValueError("Для AC3 выберите частоту 32000, 44100 или 48000")
         if codec == "truehd" and rate not in (44100, 48000):
@@ -416,7 +461,8 @@ class Converter:
                 command += ["-map", "1:v:0", *self.video_filter(work), *video_arguments,
                             "-pix_fmt", "yuv420p", "-t", str(duration)]
             command += ["-c:a", codec, "-ar", str(rate), "-ac", str(channels)]
-            if downmix:
+            if channel_filter:
+                command += ["-filter:a", channel_filter]
                 command += ["-channel_layout:a", layout]
             if codec == "flac":
                 command += ["-compression_level", str(options.flac_level)]

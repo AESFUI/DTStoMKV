@@ -66,7 +66,7 @@ class ConversionTests(unittest.TestCase):
                 self.assertEqual(chapters[0]["tags"]["title"], "Первый: 50% ; # = '")
                 self.assertEqual(float(chapters[1]["start_time"]), 0.8)
 
-    def test_channel_limit_and_preservation(self):
+    def test_channel_normalization_and_preservation(self):
         for layout, channels in (("7.1", 8), ("6.1", 7), ("5.1", 6),
                                  ("5.0", 5), ("4.0", 4), ("stereo", 2), ("mono", 1)):
             source = self.directory / f"{layout}.wav"
@@ -77,14 +77,19 @@ class ConversionTests(unittest.TestCase):
                     output = self.directory / f"{layout}-{codec}.mkv"
                     messages = []
                     engine = Converter(log=messages.append)
+                    if channels > 6 and codec in ("ac3", "truehd"):
+                        with self.assertRaisesRegex(ValueError, "максимум 6 каналов"):
+                            engine.convert(source, output, Options(codec=codec))
+                        continue
                     engine.convert(source, output, Options(codec=codec))
                     audio = engine.probe(output)["streams"][0]
-                    self.assertEqual(audio["channels"], min(channels, 6))
-                    if channels > 6:
+                    expected = 8 if channels > 6 else 6 if channels > 2 else channels
+                    self.assertEqual(audio["channels"], expected)
+                    if channels in (4, 5, 7, 8):
                         # PCM in Matroska may expose only the channel count to ffprobe.
                         if codec != "lpcm":
-                            self.assertIn(audio["channel_layout"], ("5.1", "5.1(side)"))
-                        self.assertTrue(any(line.startswith("Выходной звук:") and "5.1" in line
+                            self.assertIn(audio["channel_layout"], ("7.1",) if channels > 6 else ("5.1", "5.1(side)"))
+                        self.assertTrue(any(line.startswith("Выходной звук:") and ("7.1" if channels > 6 else "5.1") in line
                                             for line in messages))
             if channels > 6:
                 output = self.directory / f"{layout}-original.mkv"
@@ -94,7 +99,7 @@ class ConversionTests(unittest.TestCase):
                 self.assertEqual(self.engine.probe(output)["streams"][0]["channels"], channels)
                 with self.assertRaisesRegex(ValueError, "максимум 6 каналов"):
                     self.engine.convert(source, self.directory / "invalid.mkv",
-                                        Options(codec="ac3", downmix_5_1=False))
+                                        Options(codec="ac3", normalize_channels=False))
 
     def test_copy_video_from_dts_container(self):
         source = self.directory / "video dts.mkv"
