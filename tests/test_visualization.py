@@ -8,7 +8,7 @@ from unittest.mock import patch
 import numpy as np
 from PIL import ImageFont
 
-from dtstomkv.core import Converter, Options, audio_format, fit_text, sound_color, sound_features
+from dtstomkv.core import Converter, Options, audio_format, fit_text, playback_timer, sound_color, sound_features
 from dtstomkv.runtime import font_path
 
 
@@ -51,6 +51,31 @@ class TitleTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg required")
 class VisualIntegrationTests(unittest.TestCase):
+    def test_timer_renders_whole_seconds_and_optional_hours(self):
+        try:
+            font = font_path()
+        except RuntimeError as error:
+            self.skipTest(str(error))
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            shutil.copyfile(font, work / "font.ttf")
+            engine = Converter(log=lambda message: None)
+            cases = ((199.9, 61, "01:01 / 03:19"),
+                     (3599.9, 3599, "59:59 / 59:59"),
+                     (3600, 61, "00:01:01 / 01:00:00"),
+                     (3600, 3599, "00:59:59 / 01:00:00"),
+                     (3661.9, 3600, "01:00:00 / 01:01:01"))
+            for duration, elapsed, expected in cases:
+                with self.subTest(duration=duration, elapsed=elapsed):
+                    (work / "timer.txt").write_text(playback_timer(duration), encoding="utf-8")
+                    (work / "expected.txt").write_text(expected, encoding="utf-8")
+                    def render(filename, expansion):
+                        return engine.run([engine.ffmpeg, "-v", "error", "-f", "lavfi", "-i", "color=s=640x64:r=1",
+                                           "-filter:v", f"setpts=PTS+{elapsed}/TB,drawtext=fontfile=font.ttf:"
+                                           f"textfile={filename}:expansion={expansion}:fontcolor=white:fontsize=24",
+                                           "-frames:v", "1", "-f", "framemd5", "-"], cwd=work, capture=True)
+                    self.assertEqual(render("timer.txt", "normal"), render("expected.txt", "none"))
+
     def test_modes_log_audio_and_visual_frame_contains_format(self):
         try:
             font_path()
@@ -71,6 +96,7 @@ class VisualIntegrationTests(unittest.TestCase):
                 staging = args[4]
                 captured["title"] = (staging / "track0.txt").read_text(encoding="utf-8")
                 captured["format"] = (staging / "format.txt").read_text(encoding="utf-8")
+                captured["timer"] = (staging / "timer.txt").read_text(encoding="utf-8")
 
             for mode in ("none", "copy", "visual"):
                 with self.subTest(mode=mode), patch.object(engine, "visualization", side_effect=inspect):
@@ -81,6 +107,7 @@ class VisualIntegrationTests(unittest.TestCase):
                     self.assertTrue(any(line.startswith("Исходный звук: LPCM") for line in messages))
                     self.assertTrue(any(line.startswith("Выходной звук: LPCM") for line in messages))
                     if mode == "visual":
+                        self.assertEqual(captured["timer"], playback_timer(0.5))
                         self.assertEqual(len(captured["title"].splitlines()), 2)
                         self.assertRegex(captured["format"], r"^LPCM · 16 bit · 48 kHz · (mono|1 ch)$")
                         raw = work / "frame.rgb"

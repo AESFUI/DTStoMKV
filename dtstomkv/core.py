@@ -17,25 +17,6 @@ from .runtime import executable, font_path, process_options
 SUPPORTED_EXTS = (".mkv", ".aob", ".wav", ".dts", ".mlp", ".mka", ".ts", ".flac", ".ac3", ".m4a", ".truehd")
 
 
-@dataclass(frozen=True)
-class VideoProfile:
-    label: str
-    encoder: str
-    arguments: tuple[str, ...]
-
-
-VIDEO_PROFILES = {
-    "av1": VideoProfile("AV1 — libaom, screen, CRF 24, cpu-used 6", "libaom-av1",
-                        ("-crf", "24", "-b:v", "0", "-cpu-used", "6", "-row-mt", "1",
-                         "-threads:v", "0", "-aom-params", "tune-content=screen")),
-    "hevc": VideoProfile("HEVC / H.265 — x265 slow, CRF 27", "libx265",
-                         ("-preset", "slow", "-crf", "27")),
-    "vp9": VideoProfile("VP9 — libvpx, screen, CRF 17", "libvpx-vp9",
-                        ("-crf", "17", "-b:v", "0", "-tune-content", "screen")),
-    "h264": VideoProfile("H.264 — x264 ultrafast, stillimage, CRF 23 (прежний)", "libx264", ()),
-}
-
-
 class Cancelled(RuntimeError):
     pass
 
@@ -112,12 +93,14 @@ def detect_bit_depth(stream):
     return 24 if stream.get("codec_name") in ("mlp", "truehd", "flac", "dts") else 16
 
 
-def normalized_channel_map(layout, channels, codec):
+def normalized_channel_map(layout, channels, codec, max_channels=6):
     """Return an explicit speaker map, preserving signals and padding with silence."""
+    if max_channels not in (6, 8):
+        raise ValueError("Максимум каналов должен быть 6 (5.1) или 8 (7.1)")
     if not layout and channels in (1, 2):
         return channels, layout, ""
     if (layout, channels) in (("mono", 1), ("stereo", 2), ("5.1", 6),
-                              ("5.1(side)", 6), ("7.1", 8)):
+                              ("5.1(side)", 6)) or (layout == "7.1" and channels == 8 and max_channels == 8):
         return channels, layout, ""
     # A missing speaker map cannot safely be inferred from the channel count.
     layouts = {
@@ -128,13 +111,14 @@ def normalized_channel_map(layout, channels, codec):
         "6.0": "FL FR FC BC SL SR", "hexagonal": "FL FR FC BL BR BC",
         "6.1": "FL FR FC LFE BC SL SR", "6.1(back)": "FL FR FC LFE BL BR BC",
         "7.0": "FL FR FC BL BR SL SR",
+        "7.1": "FL FR FC LFE BL BR SL SR",
     }
     speakers = layouts.get(layout, "").split()
-    if len(speakers) != channels:
+    if not speakers or len(speakers) != channels:
         raise ValueError(f"Нельзя безопасно назначить каналы для раскладки {layout or 'неизвестно'} "
                          f"({channels} ch). Отключите нормализацию каналов, чтобы сохранить исходник.")
     surround = set(speakers) & {"BL", "BR", "SL", "SR"}
-    target = "7.1" if channels > 6 or ("BC" in speakers and surround) else "5.1"
+    target = "7.1" if max_channels == 8 and (channels > 6 or ("BC" in speakers and surround)) else "5.1"
     if target == "5.1" and codec == "truehd":
         target = "5.1(side)"
     outputs = ("FL FR FC LFE BL BR SL SR" if target == "7.1" else
@@ -142,17 +126,24 @@ def normalized_channel_map(layout, channels, codec):
     assignments = {speaker: speaker for speaker in speakers if speaker in outputs}
     if target != "7.1":
         for rear, side in (("BL", "SL"), ("BR", "SR")):
-            destination, alternate = (side, rear) if target == "5.1(side)" else (rear, side)
-            if alternate in speakers:
-                assignments[destination] = alternate
-    if "BC" in speakers:
+            destination = side if target == "5.1(side)" else rear
+            terms = [speaker for speaker in (rear, side) if speaker in speakers]
+            if "BC" in speakers:
+                terms.append("0.7071067811865476*BC")
+            if terms:
+                # '<' normalizes the sum of gains, providing headroom for correlated peaks.
+                assignments[destination] = ("<" if len(terms) > 1 else "") + "+".join(terms)
+    elif "BC" in speakers:
         if target == "7.1" and "BL" in speakers:
             assignments.update(SL="BL", SR="BR")
         left, right = ("SL", "SR") if target == "5.1(side)" else ("BL", "BR")
         assignments.update({left: "0.7071067811865476*BC", right: "0.7071067811865476*BC"})
     # Refer to a real input channel with a zero coefficient for silent outputs.
-    pan = "pan=" + target + "|" + "|".join(
-        f"{speaker}={assignments.get(speaker, '0*FL')}" for speaker in outputs)
+    equations = []
+    for speaker in outputs:
+        expression = assignments.get(speaker, "0*FL")
+        equations.append(speaker + (expression if expression.startswith("<") else "=" + expression))
+    pan = "pan=" + target + "|" + "|".join(equations)
     return len(outputs), target, pan
 
 
@@ -165,6 +156,19 @@ def audio_format(codec, rate, channels, depth=None, layout=None):
         parts.append(f"{depth} bit")
     parts.extend((f"{rate / 1000:g} kHz", layout or f"{channels} ch"))
     return " · ".join(parts)
+
+
+def playback_timer(duration):
+    """Drawtext expansion with whole seconds and hours only for hour-long media."""
+    seconds = max(0, int(duration))
+    if seconds >= 3600:
+        expressions = ("trunc(t/3600)", "mod(trunc(t/60),60)", "mod(trunc(t),60)")
+        total = f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}"
+    else:
+        expressions = ("trunc(t/60)", "mod(trunc(t),60)")
+        total = f"{seconds // 60:02d}:{seconds % 60:02d}"
+    elapsed = ":".join("%{eif:" + expression + ":d:2}" for expression in expressions)
+    return elapsed + " / " + total
 
 
 def fit_text(text, font, size, width, lines=2):
@@ -239,8 +243,8 @@ class Options:
     preset: str = "ultrafast"
     flac_level: int = 8
     overwrite: bool = False
-    video_profile: str = "h264"
     normalize_channels: bool = True
+    max_channels: int = 6
 
 
 class Converter:
@@ -302,22 +306,14 @@ class Converter:
         return ["-filter:v", (work / "visual.txt").read_text(encoding="utf-8")]
 
     def visual_encoding(self, options):
-        if options.video_profile not in VIDEO_PROFILES:
-            raise ValueError("Неизвестный профиль визуализации")
-        profile = VIDEO_PROFILES[options.video_profile]
         if self._video_encoders is None:
             listing = self.run([self.ffmpeg, "-hide_banner", "-encoders"], capture=True)
             self._video_encoders = set(re.findall(r"^\s*V\S{5}\s+(\S+)", listing, re.MULTILINE))
-        if profile.encoder not in self._video_encoders:
-            raise ValueError(f"В установленной сборке FFmpeg нет кодировщика {profile.encoder}. "
-                             "Установите сборку с этим кодировщиком или выберите другой профиль визуализации.")
-        if options.video_profile == "h264":
-            arguments = ("-preset", options.preset, "-tune", "stillimage", "-crf", str(options.crf))
-            self.log(f"Видео: H.264 — x264 {options.preset}, stillimage, CRF {options.crf}")
-        else:
-            arguments = profile.arguments
-            self.log("Видео: " + profile.label)
-        return ["-c:v", profile.encoder, *arguments]
+        if "libx264" not in self._video_encoders:
+            raise ValueError("В установленной сборке FFmpeg нет кодировщика libx264. "
+                             "Установите сборку FFmpeg с поддержкой libx264.")
+        self.log(f"Видео: H.264 — x264 {options.preset}, stillimage, CRF {options.crf}")
+        return ["-c:v", "libx264", "-preset", options.preset, "-tune", "stillimage", "-crf", str(options.crf)]
 
     def analyze(self, source, start, duration, work):
         # Bounded memory and analysis time, independent of the length of the album.
@@ -365,9 +361,8 @@ class Converter:
                            f"fontcolor=white:fontsize={size}:text_align=C:line_spacing={max(1, round(8 * scale))}:"
                            f"x=(w-text_w)/2:y=h*0.5-text_h/2:"
                            f"enable='gte(t,{start})*lt(t,{end})'")
-        total = f"{int(duration)//3600:02d}\\:{int(duration)%3600//60:02d}\\:{int(duration)%60:02d}"
-        elapsed = r"%{pts\:hms}"
-        filters.append(f"drawtext=fontfile=font.ttf:text='{elapsed} / {total}':"
+        (work / "timer.txt").write_text(playback_timer(duration), encoding="utf-8")
+        filters.append("drawtext=fontfile=font.ttf:textfile=timer.txt:expansion=normal:"
                        f"fontcolor=white:fontsize={max(1, round(30 * scale))}:x=(w-text_w)/2:y=h*0.72")
         label, label_size = fit_text(format_label, work / "font.ttf", max(1, round(24 * scale)), available, lines=1)
         (work / "format.txt").write_text(label, encoding="utf-8")
@@ -414,7 +409,8 @@ class Converter:
         layout = audio.get("channel_layout")
         channel_filter = ""
         if options.normalize_channels:
-            channels, layout, channel_filter = normalized_channel_map(layout, channels, options.codec)
+            channels, layout, channel_filter = normalized_channel_map(layout, channels, options.codec,
+                                                                      options.max_channels)
         if channel_filter:
             self.log("Назначение каналов: " + channel_filter)
         format_label = audio_format(options.codec, rate, channels,

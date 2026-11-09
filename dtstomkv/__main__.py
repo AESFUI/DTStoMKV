@@ -4,7 +4,7 @@ import sys
 import threading
 from pathlib import Path
 
-from .core import Cancelled, Converter, Options, VIDEO_PROFILES, default_output
+from .core import Cancelled, Converter, Options, default_output
 
 
 def main(argv=None):
@@ -15,8 +15,6 @@ def main(argv=None):
     convert.add_argument("source")
     convert.add_argument("destination", nargs="?", help="Выходной файл или папка; по умолчанию <имя входного файла>.mkv")
     convert.add_argument("--video", choices=("none", "copy", "visual"), default="none")
-    convert.add_argument("--video-profile", choices=tuple(VIDEO_PROFILES), default="h264",
-                         help="Профиль визуализации: av1 (screen/24, cpu-used 6), hevc (slow/27), vp9 (screen/17), h264 (прежний)")
     convert.add_argument("--codec", choices=("lpcm", "flac", "ac3", "truehd"), default="lpcm")
     convert.add_argument("--bit-depth", choices=("Auto", "16", "24", "32"), default="Auto")
     convert.add_argument("--sample-rate", default="Auto")
@@ -24,14 +22,16 @@ def main(argv=None):
                          action=argparse.BooleanOptionalAction, default=True,
                          help="Назначать каналы в 5.1/7.1, заполняя отсутствующие тишиной (включено по умолчанию; "
                               "--downmix-5-1 — прежнее имя опции)")
+    convert.add_argument("--max-channels", type=int, choices=(6, 8), default=6,
+                         help="Предел при нормализации: 6 — совместимый 5.1 (по умолчанию), 8 — разрешить 7.1")
     convert.add_argument("--cue", default="")
     convert.add_argument("--album", default="")
     convert.add_argument("--title", default="Full Album")
     convert.add_argument("--resolution", default="1280x720")
     convert.add_argument("--bitrate", default="448k")
     convert.add_argument("--fps", type=int, default=10)
-    convert.add_argument("--crf", type=int, default=23, help="CRF профиля h264 (по умолчанию 23)")
-    convert.add_argument("--preset", default="ultrafast", help="Preset профиля h264 (по умолчанию ultrafast)")
+    convert.add_argument("--crf", type=int, default=23, help="CRF H.264 (по умолчанию 23)")
+    convert.add_argument("--preset", default="ultrafast", help="Preset H.264 (по умолчанию ultrafast)")
     convert.add_argument("--flac-level", type=int, default=8)
     convert.add_argument("--overwrite", action="store_true")
     convert.add_argument("--ffmpeg")

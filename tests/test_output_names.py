@@ -14,7 +14,7 @@ try:
 except ImportError:
     tk = None
 
-from dtstomkv.core import Converter, VIDEO_PROFILES, default_output
+from dtstomkv.core import Converter, default_output
 from dtstomkv.runtime import process_options
 
 
@@ -53,11 +53,11 @@ class BatchNameTests(unittest.TestCase):
         app.stop_event = threading.Event()
         master = tk.Tcl()
         for name, value in {"b_in_dir": str(source), "b_out_dir": str(output), "b_video_mode": "none",
-                            "b_video_profile": VIDEO_PROFILES["h264"].label,
                             "b_codec": "lpcm", "b_bit": "Auto", "b_rate": "Auto", "bitrate": "448k"}.items():
             setattr(app, name, tk.StringVar(master=master, value=value))
         app.overwrite = tk.BooleanVar(master=master, value=True)
         app.normalize_channels = tk.BooleanVar(master=master, value=True)
+        app.max_channels = tk.StringVar(master=master, value="5.1")
         return app
 
     def test_mkv_keeps_its_name_in_another_directory(self):

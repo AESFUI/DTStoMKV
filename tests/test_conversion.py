@@ -77,21 +77,25 @@ class ConversionTests(unittest.TestCase):
                     output = self.directory / f"{layout}-{codec}.mkv"
                     messages = []
                     engine = Converter(log=messages.append)
-                    if channels > 6 and codec in ("ac3", "truehd"):
-                        with self.assertRaisesRegex(ValueError, "максимум 6 каналов"):
-                            engine.convert(source, output, Options(codec=codec))
-                        continue
                     engine.convert(source, output, Options(codec=codec))
                     audio = engine.probe(output)["streams"][0]
-                    expected = 8 if channels > 6 else 6 if channels > 2 else channels
+                    expected = 6 if channels > 2 else channels
                     self.assertEqual(audio["channels"], expected)
                     if channels in (4, 5, 7, 8):
                         # PCM in Matroska may expose only the channel count to ffprobe.
                         if codec != "lpcm":
-                            self.assertIn(audio["channel_layout"], ("7.1",) if channels > 6 else ("5.1", "5.1(side)"))
-                        self.assertTrue(any(line.startswith("Выходной звук:") and ("7.1" if channels > 6 else "5.1") in line
+                            self.assertIn(audio["channel_layout"], ("5.1", "5.1(side)"))
+                        self.assertTrue(any(line.startswith("Выходной звук:") and "5.1" in line
                                             for line in messages))
             if channels > 6:
+                expanded = self.directory / f"{layout}-expanded.mkv"
+                result = subprocess.run([sys.executable, "-m", "dtstomkv", "convert", str(source),
+                                         str(expanded), "--max-channels", "8"], capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.engine.probe(expanded)["streams"][0]["channels"], 8)
+                with self.assertRaisesRegex(ValueError, "максимум 6 каналов"):
+                    self.engine.convert(source, self.directory / "unsupported.mkv",
+                                        Options(codec="truehd", max_channels=8))
                 output = self.directory / f"{layout}-original.mkv"
                 result = subprocess.run([sys.executable, "-m", "dtstomkv", "convert", str(source),
                                          str(output), "--no-downmix-5-1"], capture_output=True)
