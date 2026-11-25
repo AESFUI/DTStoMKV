@@ -13,6 +13,10 @@ for prefix in ("s", "v", "b"):
     assert app.options(prefix).codec == "lpcm"
     assert not hasattr(app, prefix + "_video_profile")
     assert app.options(prefix).normalize_channels is True
+    assert app.options(prefix).copy_ac3 is True
+    app.copy_ac3.set(False)
+    assert app.options(prefix).copy_ac3 is False
+    app.copy_ac3.set(True)
     assert app.options(prefix).max_channels == 6
     app.max_channels.set("7.1")
     assert app.options(prefix).max_channels == 8

@@ -252,6 +252,7 @@ class Options:
     overwrite: bool = False
     normalize_channels: bool = True
     max_channels: int = 6
+    copy_ac3: bool = True
 
 
 class Converter:
@@ -406,8 +407,10 @@ class Converter:
         audio = next((s for s in data.get("streams", []) if s.get("codec_type") == "audio"), None)
         if audio is None:
             raise ValueError("Нет аудиопотоков")
+        copy_audio = options.copy_ac3 and audio.get("codec_name") == "ac3"
         depth = detect_bit_depth(audio) if options.bit_depth == "Auto" else int(options.bit_depth)
-        rate = int(audio.get("sample_rate", 48000)) if options.sample_rate == "Auto" else int(options.sample_rate)
+        rate = (int(audio.get("sample_rate", 48000)) if copy_audio or options.sample_rate == "Auto"
+                else int(options.sample_rate))
         if rate <= 0:
             raise ValueError("Частота должна быть положительной")
         channels = int(audio.get("channels", 2))
@@ -415,15 +418,17 @@ class Converter:
                  int(audio.get("sample_rate") or rate), channels, detect_bit_depth(audio), audio.get("channel_layout")))
         layout = audio.get("channel_layout")
         channel_filter = ""
-        if options.normalize_channels:
+        if copy_audio:
+            self.log("AC3: прямое копирование без перекодирования; частота, битрейт и каналы сохраняются.")
+        elif options.normalize_channels:
             channels, layout, channel_filter = normalized_channel_map(layout, channels, options.codec,
                                                                       options.max_channels)
         if channel_filter:
             self.log("Назначение каналов: " + channel_filter)
-        format_label = audio_format(options.codec, rate, channels,
+        format_label = audio_format("ac3" if copy_audio else options.codec, rate, channels,
                                     depth if options.codec == "lpcm" else None, layout)
         self.log("Выходной звук: " + format_label)
-        codec = options.codec
+        codec = "copy" if copy_audio else options.codec
         if codec == "lpcm":
             codec = "pcm_s32le" if depth >= 32 else "pcm_s24le" if depth >= 24 else "pcm_s16le"
         if codec in ("ac3", "truehd") and channels > 6:
@@ -448,7 +453,9 @@ class Converter:
                 if tracks and tracks[-1]["start"] >= duration:
                     raise ValueError("CUE выходит за длительность аудио")
                 self.visualization(source, visual_tracks, duration, options, work, format_label)
-                command += ["-f", "lavfi", "-i", f"color=c=black:s={options.resolution}:r={options.fps}"]
+                # Limit only generated video: an estimated duration must not cut copied audio packets.
+                command += ["-f", "lavfi", "-i",
+                            f"color=c=black:s={options.resolution}:r={options.fps}:d={duration}"]
                 metadata_index = 2
             if tracks:
                 write_chapters(work / "chapters.txt", tracks, duration)
@@ -462,8 +469,10 @@ class Converter:
                 command += ["-map", "0:v:0?", "-c:v", "copy"]
             elif options.video == "visual":
                 command += ["-map", "1:v:0", *self.video_filter(work), *video_arguments,
-                            "-pix_fmt", "yuv420p", "-t", str(duration)]
-            command += ["-c:a", codec, "-ar", str(rate), "-ac", str(channels)]
+                            "-pix_fmt", "yuv420p"]
+            command += ["-c:a", codec]
+            if not copy_audio:
+                command += ["-ar", str(rate), "-ac", str(channels)]
             if channel_filter:
                 command += ["-filter:a", channel_filter]
                 command += ["-channel_layout:a", layout]

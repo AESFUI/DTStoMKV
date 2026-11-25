@@ -39,6 +39,9 @@ class App:
                      width=5, state="readonly").pack(side="left")
         self.overwrite = tk.BooleanVar(value=False)
         self.normalize_channels = tk.BooleanVar(value=True)
+        self.copy_ac3 = tk.BooleanVar(value=True)
+        ttk.Checkbutton(root, text="Копировать исходный AC3 без перекодирования; для остальных — выбранный кодек",
+                        variable=self.copy_ac3).pack(anchor="w")
         ttk.Checkbutton(root, text="Назначать каналы до выбранного максимума, отсутствующие — тишина (моно и стерео сохраняются)",
                         variable=self.normalize_channels).pack(anchor="w")
         ttk.Checkbutton(root, text="Перезаписывать существующие выходные файлы", variable=self.overwrite).pack(anchor="w")
@@ -56,6 +59,7 @@ class App:
                        bit_depth=getattr(self, prefix + "_bit").get(),
                        sample_rate=getattr(self, prefix + "_rate").get(),
                        normalize_channels=self.normalize_channels.get(),
+                       copy_ac3=self.copy_ac3.get(),
                        max_channels={"5.1": 6, "7.1": 8}[self.max_channels.get()],
                        overwrite=self.overwrite.get(), bitrate=self.bitrate.get(),
                        **({"video": video.get()} | kwargs if video else kwargs))

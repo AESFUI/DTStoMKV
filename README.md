@@ -6,6 +6,7 @@
 Возможности:
 
 - LPCM 16/24/32 bit, FLAC, AC3 и TrueHD; выбор частоты, назначение каналов в 5.1/7.1.
+- Исходный AC3 по умолчанию копируется в MKV без перекодирования во всех режимах.
 - Конвертация без видео, копирование первой видеодорожки или цветная визуализация
   H.264 (libx264).
 - Главы и названия треков из однофайлового CUE, UTF-8/BOM и Windows-1251.
@@ -60,10 +61,20 @@ python -m dtstomkv convert input.mkv /path/to/existing/output-folder/
 python -m dtstomkv convert input.mkv output.mkv --video copy --bit-depth 24
 python -m dtstomkv convert album.wav album.mkv --video visual --cue album.cue --album "Название альбома"
 python -m dtstomkv convert input.wav output.mkv --codec flac --flac-level 8
-python -m dtstomkv convert input.wav output.mkv --codec ac3 --bitrate 640k --sample-rate 48000
+python -m dtstomkv convert input.wav output.mkv --codec ac3 --bitrate 640k --sample-rate 48000 --no-copy-ac3
 python -m dtstomkv convert input.wav output.mkv --codec truehd --sample-rate 48000
 python -m dtstomkv convert --help
 ```
+
+Исходный Dolby Digital (AC3), в том числе внутри WAV, по умолчанию переносится
+без перекодирования: сохраняются битрейт, частота и раскладка каналов, включая 5.0.
+Для него выбранный выходной кодек, битность, частота и нормализация каналов
+не применяются. В смешанной папке AC3 копируется, остальные записи обрабатываются
+выбранным кодеком. Визуализация и главы из CUE доступны и при копировании AC3;
+журнал и надпись на видео показывают фактический выходной формат AC3.
+Для явного перекодирования AC3 снимите общий флажок «Копировать исходный AC3»
+в GUI или добавьте `--no-copy-ac3` в CLI. Это также позволяет назначить каналы
+или изменить частоту и битрейт AC3. `--copy-ac3` явно включает копирование.
 
 Для разрешённой перезаписи добавьте `--overwrite` или включите соответствующий
 флажок в GUI. `Ctrl+C` останавливает CLI и завершает дочерний процесс.
@@ -216,6 +227,8 @@ python -m unittest discover -s tests -v
 главы, кириллицу и спецсимволы, копирование видео из DTS-контейнера,
 визуализацию H.264, формат таймера, CLI, отмену и защиту выходных файлов.
 Проверяются декодирование видео, сохранность аудио и глав. Нужны FFmpeg и ffprobe.
+Для AC3 в WAV проверяются совпадение аудиопакетов при копировании, сохранение 5.0,
+главы и визуализация, смешанная пакетная обработка и явное отключение копирования.
 Без них интеграционные проверки пропускаются.
 Отдельная проверка GUI: `python tests/gui_smoke.py` (нужен дисплей; Linux —
 `xvfb-run -a python tests/gui_smoke.py`). Workflow GitHub Actions запускает проверки

@@ -57,6 +57,7 @@ class BatchNameTests(unittest.TestCase):
             setattr(app, name, tk.StringVar(master=master, value=value))
         app.overwrite = tk.BooleanVar(master=master, value=True)
         app.normalize_channels = tk.BooleanVar(master=master, value=True)
+        app.copy_ac3 = tk.BooleanVar(master=master, value=True)
         app.max_channels = tk.StringVar(master=master, value="5.1")
         return app
 

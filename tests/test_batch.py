@@ -18,6 +18,39 @@ from dtstomkv.core import Converter
 
 @unittest.skipUnless(tk and shutil.which("ffmpeg") and shutil.which("ffprobe"), "Tkinter and FFmpeg required")
 class BatchTests(unittest.TestCase):
+    def test_mixed_dts_and_ac3_batch_copies_only_ac3(self):
+        from dtstomkv.gui import App
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            source = folder / "input"
+            source.mkdir()
+            output = folder / "output"
+            engine = Converter(log=lambda message: None)
+            for name, codec, extra in (("dolby.ac3", "ac3", []),
+                                       ("surround.dts", "dca", ["-strict", "-2"])):
+                engine.run([engine.ffmpeg, "-v", "error", "-f", "lavfi", "-i",
+                            "anullsrc=r=44100:cl=5.0(side)", "-t", "0.5",
+                            "-c:a", codec, *extra, str(source / name)])
+            app = App.__new__(App)
+            app.events = queue.Queue()
+            app.stop_event = threading.Event()
+            settings = dict(b_in_dir=str(source), b_out_dir=str(output), b_video_mode="none",
+                            b_codec="lpcm", b_bit="Auto", b_rate="Auto", bitrate="192k",
+                            overwrite=False, normalize_channels=True, max_channels="5.1", copy_ac3=True)
+            for name, value in settings.items():
+                setattr(app, name, Mock(get=Mock(return_value=value)))
+            task = app.run_batch()
+            app.copy_ac3.get.return_value = False  # The running batch keeps its snapshot.
+            task()
+            dolby = engine.probe(output / "dolby.mkv")["streams"][0]
+            dts = engine.probe(output / "surround.mkv")["streams"][0]
+            self.assertEqual((dolby["codec_name"], dolby["channels"]), ("ac3", 5))
+            self.assertEqual((dts["codec_name"], dts["channels"]), ("pcm_s24le", 6))
+            def digest(path):
+                return engine.run([engine.ffmpeg, "-v", "error", "-i", str(path),
+                                   "-map", "0:a:0", "-c:a", "copy", "-f", "hash", "-"], capture=True)
+            self.assertEqual(digest(source / "dolby.ac3"), digest(output / "dolby.mkv"))
+
     def test_visual_settings_are_snapshotted_for_the_whole_batch(self):
         from dtstomkv.gui import App
         with tempfile.TemporaryDirectory() as directory:
@@ -33,9 +66,11 @@ class BatchTests(unittest.TestCase):
                 setattr(app, name, tk.StringVar(master=master, value=value))
             app.overwrite = tk.BooleanVar(master=master, value=False)
             app.normalize_channels = tk.BooleanVar(master=master, value=True)
+            app.copy_ac3 = tk.BooleanVar(master=master, value=True)
             app.max_channels = tk.StringVar(master=master, value="5.1")
             task = app.run_batch()
             app.normalize_channels.set(False)
+            app.copy_ac3.set(False)
             app.max_channels.set("7.1")
             app.b_video_mode.set("none")
             engine = Mock()
@@ -45,6 +80,7 @@ class BatchTests(unittest.TestCase):
             for call in engine.convert.call_args_list:
                 self.assertEqual(call.args[2].video, "visual")
                 self.assertTrue(call.args[2].normalize_channels)
+                self.assertTrue(call.args[2].copy_ac3)
                 self.assertEqual(call.args[2].max_channels, 6)
 
     def test_snapshot_and_repeat_batch_with_uppercase_cue(self):
@@ -65,6 +101,7 @@ class BatchTests(unittest.TestCase):
                 setattr(app, name, tk.StringVar(master=master, value=value))
             app.overwrite = tk.BooleanVar(master=master, value=False)
             app.normalize_channels = tk.BooleanVar(master=master, value=True)
+            app.copy_ac3 = tk.BooleanVar(master=master, value=True)
             app.max_channels = tk.StringVar(master=master, value="5.1")
             task = app.run_batch()
             app.b_codec.set("invalid")  # Edits after launch must not change the queued job.

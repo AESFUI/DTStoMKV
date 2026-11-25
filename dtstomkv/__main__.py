@@ -16,6 +16,9 @@ def main(argv=None):
     convert.add_argument("destination", nargs="?", help="Выходной файл или папка; по умолчанию <имя входного файла>.mkv")
     convert.add_argument("--video", choices=("none", "copy", "visual"), default="none")
     convert.add_argument("--codec", choices=("lpcm", "flac", "ac3", "truehd"), default="lpcm")
+    convert.add_argument("--copy-ac3", action=argparse.BooleanOptionalAction, default=True,
+                         help="Копировать исходный AC3 без перекодирования (по умолчанию); "
+                              "для остальных источников используется --codec")
     convert.add_argument("--bit-depth", choices=("Auto", "16", "24", "32"), default="Auto")
     convert.add_argument("--sample-rate", default="Auto")
     convert.add_argument("--normalize-channels", "--downmix-5-1", dest="normalize_channels",
