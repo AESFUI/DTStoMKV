@@ -128,6 +128,9 @@ class VisualIntegrationTests(unittest.TestCase):
             source = work / "source.wav"
             engine.run([engine.ffmpeg, "-v", "error", "-f", "lavfi", "-i",
                         "sine=duration=0.5:sample_rate=48000", str(source)])
+            dts = work / "source.dts"
+            engine.run([engine.ffmpeg, "-v", "error", "-i", str(source), "-ac", "2",
+                        "-c:a", "dca", "-strict", "-2", str(dts)])
             original_visualization = engine.visualization
             captured = {}
 
@@ -138,19 +141,24 @@ class VisualIntegrationTests(unittest.TestCase):
                 captured["format"] = (staging / "format.txt").read_text(encoding="utf-8")
                 captured["timer"] = (staging / "timer.txt").read_text(encoding="utf-8")
 
-            for mode in ("none", "copy", "visual"):
-                with self.subTest(mode=mode), patch.object(engine, "visualization", side_effect=inspect):
+            cases = (("none", source, "LPCM"), ("copy", source, "LPCM"),
+                     ("visual", source, "LPCM"), ("visual", dts, "DTS"))
+            for mode, current_source, source_codec in cases:
+                with self.subTest(mode=mode, source_codec=source_codec), patch.object(engine, "visualization", side_effect=inspect):
                     messages.clear()
-                    output = work / f"{mode}.mkv"
-                    engine.convert(source, output, Options(video=mode, title="Длинное имя трека " * 8,
+                    output = work / f"{mode}-{source_codec}.mkv"
+                    engine.convert(current_source, output, Options(video=mode, title="Длинное имя трека " * 8,
                                                            resolution="320x240"))
-                    self.assertTrue(any(line.startswith("Исходный звук: LPCM") for line in messages))
+                    self.assertTrue(any(line.startswith("Исходный звук: " + source_codec) for line in messages))
                     self.assertTrue(any(line.startswith("Выходной звук: LPCM") for line in messages))
                     if mode == "visual":
                         self.assertEqual(captured["timer"], playback_timer(0.5))
                         self.assertEqual(len(captured["title"].splitlines()), 2)
-                        self.assertRegex(captured["format"], r"^LPCM · 16 bit · 48 kHz · (mono|1 ch)$")
-                        raw = work / "frame.rgb"
+                        if source_codec == "DTS":
+                            self.assertEqual(captured["format"], "LPCM · 24 bit · 48 kHz · stereo · исходник: DTS")
+                        else:
+                            self.assertRegex(captured["format"], r"^LPCM · 16 bit · 48 kHz · (mono|1 ch) · исходник: LPCM$")
+                        raw = work / f"frame-{source_codec}.rgb"
                         engine.run([engine.ffmpeg, "-v", "error", "-i", str(output), "-frames:v", "1",
                                     "-f", "rawvideo", "-pix_fmt", "rgb24", str(raw)])
                         pixels = np.frombuffer(raw.read_bytes(), dtype=np.uint8).reshape(240, 320, 3)

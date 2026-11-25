@@ -147,10 +147,14 @@ def normalized_channel_map(layout, channels, codec, max_channels=6):
     return len(outputs), target, pan
 
 
-def audio_format(codec, rate, channels, depth=None, layout=None):
-    name = {"lpcm": "LPCM", "ac3": "AC3", "truehd": "TrueHD"}.get(codec, codec.upper())
+def audio_codec_name(codec):
     if codec.startswith("pcm_"):
-        name = "LPCM"
+        return "LPCM"
+    return {"lpcm": "LPCM", "ac3": "AC3", "truehd": "TrueHD"}.get(codec, codec.upper())
+
+
+def audio_format(codec, rate, channels, depth=None, layout=None):
+    name = audio_codec_name(codec)
     parts = [name]
     if depth and (name in ("LPCM", "FLAC", "TrueHD", "MLP")):
         parts.append(f"{depth} bit")
@@ -452,7 +456,8 @@ class Converter:
                 visual_tracks = tracks or [{"num": 1, "title": options.title, "start": 0.0}]
                 if tracks and tracks[-1]["start"] >= duration:
                     raise ValueError("CUE выходит за длительность аудио")
-                self.visualization(source, visual_tracks, duration, options, work, format_label)
+                visual_label = format_label + " · исходник: " + audio_codec_name(audio.get("codec_name", "unknown"))
+                self.visualization(source, visual_tracks, duration, options, work, visual_label)
                 # Limit only generated video: an estimated duration must not cut copied audio packets.
                 command += ["-f", "lavfi", "-i",
                             f"color=c=black:s={options.resolution}:r={options.fps}:d={duration}"]

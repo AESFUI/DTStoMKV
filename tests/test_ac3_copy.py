@@ -77,7 +77,7 @@ class Ac3CopyTests(unittest.TestCase):
                 ], capture=True))["chapters"]
                 self.assertEqual([chapter["tags"]["title"] for chapter in chapters], ["Первый", "Второй"])
                 if mode == "visual":
-                    self.assertEqual(labels, ["AC3 · 44.1 kHz · 5.0(side)"])
+                    self.assertEqual(labels, ["AC3 · 44.1 kHz · 5.0(side) · исходник: AC3"])
                     self.assertIn("h264", {stream["codec_name"] for stream in info["streams"]})
                     self.engine.run([self.engine.ffmpeg, "-v", "error", "-i", str(output),
                                      "-map", "0:v:0", "-f", "null", "-"])
