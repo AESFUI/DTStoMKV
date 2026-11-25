@@ -1,4 +1,5 @@
 """Acoustic color mapping and measured titles, including the encoded frames."""
+import colorsys
 import shutil
 import tempfile
 import unittest
@@ -13,6 +14,11 @@ from dtstomkv.runtime import font_path
 
 
 class ColorTests(unittest.TestCase):
+    @staticmethod
+    def rgb(features):
+        color = sound_color(features)
+        return tuple(int(color[i:i + 2], 16) / 255 for i in (2, 4, 6))
+
     def test_content_changes_color_and_silence_is_finite(self):
         time = np.arange(22050) / 22050
         bass = 0.25 * np.sin(2 * np.pi * 80 * time)
@@ -24,6 +30,40 @@ class ColorTests(unittest.TestCase):
             features = sound_features(audio)
             self.assertTrue(all(np.isfinite(value) for value in features.values()))
             self.assertRegex(sound_color(features), r"^0x[0-9a-f]{6}$")
+
+    def test_musical_timbres_cover_a_broad_palette(self):
+        # Ordinary musical spectra, rather than only extreme pure tones.
+        timbres = ((250, 0.8, 0.01, 0.30), (400, 0.7, 0.03, 0.35),
+                   (600, 0.5, 0.04, 0.40), (900, 0.3, 0.06, 0.35),
+                   (1400, 0.15, 0.12, 0.40))
+        hues = sorted(colorsys.rgb_to_hsv(*self.rgb(dict(centroid=centroid, bass=bass,
+                      treble=treble, flux=flux, rms=0.03, crest=8)))[0]
+                      for centroid, bass, treble, flux in timbres)
+        gaps = [b - a for a, b in zip(hues, hues[1:])] + [hues[0] + 1 - hues[-1]]
+        self.assertGreater(1 - max(gaps), 0.65)
+        self.assertGreaterEqual(len({int(hue * 8) for hue in hues}), 5)
+
+    def test_nearby_sounds_and_gain_changes_keep_related_hues(self):
+        base = dict(centroid=650, bass=0.4, treble=0.04, flux=0.32, rms=0.03, crest=9)
+        reference = colorsys.rgb_to_hsv(*self.rgb(base))[0]
+        for features, tolerance in ((dict(base, centroid=663, flux=0.323), 0.03),
+                                    (dict(base, rms=0.003), 0.01)):
+            hue = colorsys.rgb_to_hsv(*self.rgb(features))[0]
+            distance = abs(hue - reference)
+            self.assertLess(min(distance, 1 - distance), tolerance)
+        ordered = [base, dict(base, centroid=1300), dict(base, centroid=300)]
+        self.assertEqual([sound_color(f) for f in ordered],
+                         list(reversed([sound_color(f) for f in reversed(ordered)])))
+
+    def test_white_text_contrast_on_quiet_and_loud_backgrounds(self):
+        for centroid in (0, 80, 250, 650, 1500, 6000, 11025):
+            for bass, treble, flux in ((0, 0, 0), (0.8, 0.01, 0.3), (0, 1, 1)):
+                for rms in (0, 0.003, 0.1, 1):
+                    rgb = self.rgb(dict(centroid=centroid, bass=bass, treble=treble,
+                                        flux=flux, rms=rms, crest=30))
+                    linear = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in rgb]
+                    luminance = sum(v * weight for v, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
+                    self.assertGreaterEqual(1.05 / (luminance + 0.05), 4.5)
 
     def test_lossy_format_does_not_claim_pcm_bit_depth(self):
         self.assertEqual(audio_format("lpcm", 96000, 6, 24, "5.1"), "LPCM · 24 bit · 96 kHz · 5.1")

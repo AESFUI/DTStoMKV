@@ -215,15 +215,22 @@ def sound_features(samples, sample_rate=22050):
 
 
 def sound_color(features):
-    # Absolute acoustic mapping: a track keeps its color in any album/order.
+    """Spread musical timbres around the color wheel using fixed, smooth scales."""
     import math
-    brightness = min(1, math.log1p(features["centroid"] / 100) / math.log(81))
-    hue = (0.04 + 0.72 * brightness + 0.13 * features["treble"]
-           - 0.12 * features["bass"] + 0.10 * features["flux"]) % 1
-    saturation = min(0.95, 0.55 + 0.25 * features["bass"] + 0.15 * features["flux"])
-    # Dark background preserves contrast with white text, even for loud tracks.
-    value = min(0.43, 0.20 + 0.16 * min(1, features["rms"] * 5)
-                + 0.07 * min(1, features["crest"] / 12))
+    # Expand differences in the range occupied by music, with smooth tails for
+    # unusually dark/bright recordings. No album-relative ranks or random seed:
+    # similar spectra stay close and a track keeps its color in any order.
+    tone = 0.5 + 0.5 * math.tanh(math.log2(max(features["centroid"], 20) / 650) / 1.4)
+    motion = 0.5 + 0.5 * math.tanh((features["flux"] - 0.32) / 0.10)
+    air = features["treble"] / (features["treble"] + 0.06)
+    hue = (0.10 + 0.80 * tone + 0.18 * (motion - 0.5)
+           + 0.10 * (air - 0.5) - 0.08 * (features["bass"] - 0.5)) % 1
+    saturation = min(0.95, 0.58 + 0.22 * features["bass"] + 0.14 * motion)
+    # Logarithmic loudness distinguishes quiet tracks without making their
+    # backgrounds nearly black. The 0.47 ceiling keeps white text legible.
+    loudness = min(1, math.log1p(features["rms"] * 100) / math.log(21))
+    dynamics = min(1, math.log1p(features["crest"]) / math.log(33))
+    value = 0.34 + 0.10 * loudness + 0.03 * dynamics
     return "0x" + "".join(f"{round(v * 255):02x}" for v in colorsys.hsv_to_rgb(hue, saturation, value))
 
 
