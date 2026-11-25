@@ -473,7 +473,6 @@ class Converter:
             self.run(command, cwd=work, progress=progress)
             if self.stop_event.is_set():
                 raise Cancelled("Остановлено пользователем")
-            progress.complete()
             if options.overwrite:
                 os.replace(work / "result.mkv", destination)
             else:
@@ -495,5 +494,6 @@ class Converter:
                             target.close()
                             destination.unlink()
                             raise
+        progress.complete()
         self.log(f"Сохранено: {destination}")
         return destination

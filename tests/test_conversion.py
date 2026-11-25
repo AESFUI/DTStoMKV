@@ -179,6 +179,35 @@ class ConversionTests(unittest.TestCase):
             self.engine.convert(self.source, output)
         self.assertEqual(self.engine.probe(output)["streams"][0]["codec_name"], "pcm_s24le")
 
+    def test_progress_completes_only_after_output_is_saved(self):
+        output = self.directory / "saved.mkv"
+        messages = []
+        def log(message):
+            if "100.0%" in message:
+                self.assertTrue(output.is_file())
+                self.assertGreater(output.stat().st_size, 0)
+            messages.append(message)
+        self.engine.log = log
+        self.engine.convert(self.source, output)
+        self.assertTrue(any("100.0%" in message for message in messages))
+        for overwrite in (False, True):
+            with self.subTest(overwrite=overwrite):
+                messages.clear()
+                output.unlink(missing_ok=True)
+                real_open = Path.open
+                def fail_destination_open(path, *args, **kwargs):
+                    if path == output:
+                        raise PermissionError("cannot save")
+                    return real_open(path, *args, **kwargs)
+                operation = "dtstomkv.core.os.replace" if overwrite else "pathlib.Path.open"
+                with patch("dtstomkv.core.os.link", side_effect=OSError("no hardlinks")), \
+                     patch(operation, autospec=True,
+                           side_effect=PermissionError("cannot save") if overwrite else fail_destination_open) as save:
+                    with self.assertRaises(PermissionError):
+                        self.engine.convert(self.source, output, Options(overwrite=overwrite))
+                self.assertTrue(save.called)
+                self.assertFalse(any("100.0%" in message for message in messages))
+
     def test_cli(self):
         output = self.directory / "cli.mkv"
         result = subprocess.run([sys.executable, "-m", "dtstomkv", "convert", str(self.source),

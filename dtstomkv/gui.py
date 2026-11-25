@@ -127,6 +127,7 @@ class App:
             self.events.put(("done", None))
 
     def toggle_buttons(self, state):
+        self.btn_simple_info.configure(state="normal" if state == "enable" else "disabled")
         for prefix in ("simple", "visual", "batch"):
             getattr(self, "btn_" + prefix + "_start").configure(state="normal" if state == "enable" else "disabled")
             getattr(self, "btn_" + prefix + "_stop").configure(state="disabled" if state == "enable" else "normal")
@@ -143,6 +144,12 @@ class App:
                     self.is_running = False
                     self.toggle_buttons("enable")
                     self.stop_event.clear()
+                elif kind == "info":
+                    source, text = value
+                    if source == self.s_in.get():
+                        self.s_info.config(text=text)
+                elif kind == "info_error":
+                    messagebox.showerror("Ошибка", value)
                 else:
                     self.log.insert("end", value + "\n")
                     self.log.see("end")
@@ -210,7 +217,8 @@ class App:
 
 
         bf = ttk.Frame(f); bf.grid(row=r, column=0, columnspan=3, pady=10); r+=1
-        ttk.Button(bf, text="Показать инфо", command=self.probe_simple).pack(side='left', padx=5)
+        self.btn_simple_info = ttk.Button(bf, text="Показать инфо", command=self.probe_simple)
+        self.btn_simple_info.pack(side='left', padx=5)
         self.btn_simple_start = ttk.Button(bf, text="▶ Конвертировать", command=lambda: self.start_task(self.run_simple))
         self.btn_simple_start.pack(side='left', padx=5)
         self.btn_simple_stop = ttk.Button(bf, text="⏹ Стоп", command=self.stop_processing, state='disabled')
@@ -230,6 +238,9 @@ class App:
     def probe_simple(self):
         p = self.s_in.get()
         if not p: return
+        self.start_task(lambda: lambda: self._probe_simple(p))
+
+    def _probe_simple(self, p):
         try:
             d = self.converter().probe(p)
             lines = []
@@ -243,9 +254,13 @@ class App:
                     lines.append(f"AUDIO: {s.get('codec_name')} | {s.get('sample_rate')} Hz | {s.get('channels')} ch | {depth_label}")
                 elif ct == "video":
                     lines.append(f"VIDEO: {s.get('codec_name')} | {s.get('width')}x{s.get('height')}")
-            self.s_info.config(text="\n".join(lines))
-            self.log_msg("\n".join(lines))
-        except Exception as e: messagebox.showerror("Ошибка", str(e))
+            text = "\n".join(lines)
+            self.events.put(("info", (p, text)))
+            self.log_msg(text)
+        except Cancelled:
+            raise
+        except Exception as error:
+            self.events.put(("info_error", str(error)))
 
     def run_simple(self):
         options = self.options("s", cue=self.s_cue.get() if self.s_use_cue.get() else "",
