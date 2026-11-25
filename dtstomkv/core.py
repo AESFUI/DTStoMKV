@@ -456,7 +456,7 @@ class Converter:
                 visual_tracks = tracks or [{"num": 1, "title": options.title, "start": 0.0}]
                 if tracks and tracks[-1]["start"] >= duration:
                     raise ValueError("CUE выходит за длительность аудио")
-                visual_label = format_label + " · исходник: " + audio_codec_name(audio.get("codec_name", "unknown"))
+                visual_label = audio_codec_name(audio.get("codec_name", "unknown")) + " -> " + format_label
                 self.visualization(source, visual_tracks, duration, options, work, visual_label)
                 # Limit only generated video: an estimated duration must not cut copied audio packets.
                 command += ["-f", "lavfi", "-i",

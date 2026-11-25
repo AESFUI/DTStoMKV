@@ -155,9 +155,9 @@ class VisualIntegrationTests(unittest.TestCase):
                         self.assertEqual(captured["timer"], playback_timer(0.5))
                         self.assertEqual(len(captured["title"].splitlines()), 2)
                         if source_codec == "DTS":
-                            self.assertEqual(captured["format"], "LPCM · 24 bit · 48 kHz · stereo · исходник: DTS")
+                            self.assertEqual(captured["format"], "DTS -> LPCM · 24 bit · 48 kHz · stereo")
                         else:
-                            self.assertRegex(captured["format"], r"^LPCM · 16 bit · 48 kHz · (mono|1 ch) · исходник: LPCM$")
+                            self.assertRegex(captured["format"], r"^LPCM -> LPCM · 16 bit · 48 kHz · (mono|1 ch)$")
                         raw = work / f"frame-{source_codec}.rgb"
                         engine.run([engine.ffmpeg, "-v", "error", "-i", str(output), "-frames:v", "1",
                                     "-f", "rawvideo", "-pix_fmt", "rgb24", str(raw)])
